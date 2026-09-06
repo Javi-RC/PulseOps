@@ -8,8 +8,8 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 5 complete — Real-time dashboard. **The MVP is feature-complete.** |
-| Next | Phase 6 — CI, then tag v0.1.0 |
+| Phase | 6 complete — **MVP shipped, tagged `v0.1.0`** |
+| Next | V2 — Oban, alert rules, notifications, activity log, metric rollups |
 | Checks | `mix check` green: 273 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
@@ -154,14 +154,32 @@ entries recorded and no author.
   status has its own icon, so a badge still reads in greyscale.
 - `/` and the post-login redirect now send a logged-in user to their dashboard.
 
-## Next steps
+### Phase 6 — Continuous integration and release
 
-Phase 6 — CI and release:
+- `.github/workflows/ci.yml`: `postgres:17-alpine` service with
+  `DATABASE_HOST=localhost`, `deps`/`_build` and the Dialyzer PLT cached
+  separately, and steps format → unused deps → compile → credo → test → dialyzer.
+- `README.md` now carries the supervision tree, the check cycle, and the reasoning
+  behind the parts of the design that look unusual.
+- Tagged `v0.1.0` on `main`.
 
-1. `.github/workflows/ci.yml`: `postgres:17` service, cached `deps`/`_build`/PLT,
-   steps format → credo → test → dialyzer.
-2. Flesh out `README.md` with the supervision-tree diagram and a demo GIF.
-3. Run the AI-trace audit from the checklist below, then tag `v0.1.0` on `main`.
+## Next steps — V2
+
+Nothing here is started. In rough order of what adds most:
+
+1. **Oban** for work that should not sit in a monitor's callback: notifications,
+   and pruning `service_checks`, which is the fastest-growing table by far.
+2. **Alert rules** — replace the hardcoded thresholds in `ServiceMonitor`
+   (`@failure_threshold`, `@success_threshold`, `@degraded_ratio`) and the
+   environment-based severity in `Incidents.severity_for/1` with configurable rules.
+3. **Notifications**: Slack and generic webhooks first, email second.
+4. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
+   retention policy.
+5. **Activity log** for auditability.
+
+Then V3: clustering with leader election so several nodes do not duplicate checks,
+Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique
+index (ADR-004) is already what makes the clustering step safe.
 
 ## Traps already hit
 
