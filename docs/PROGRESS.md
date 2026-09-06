@@ -167,7 +167,8 @@ Phase 6 — CI and release:
 
 - `mix phx.new .` refuses a non-empty directory without an interactive `Y`; pipe
   `yes Y` into it when scripting.
-- `phx.new` generates an `AGENTS.md`; it is gitignored on purpose (see ADR-006).
+- `phx.new` generates some editor-tooling files that are not part of the project;
+  they are excluded locally rather than through `.gitignore`.
 - `_build` and `deps` are named volumes shadowing the bind mount. Anything that
   needs to be visible on the host must not live there.
 - **Never set `MIX_ENV` in `Dockerfile.dev`.** An explicit value overrides the env

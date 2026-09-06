@@ -38,7 +38,5 @@ npm-debug.log
 # Local environment overrides.
 .env
 
-
-
 # Dialyzer PLT cache.
 /priv/plts/
