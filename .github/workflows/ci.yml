@@ -13,14 +13,21 @@ concurrency:
 
 env:
   MIX_ENV: test
-  # The local toolchain runs in compose, where the database is reachable as
-  # "db"; on a runner it is a service container on localhost.
-  DATABASE_HOST: localhost
 
 jobs:
   test:
     name: format, credo, test, dialyzer
     runs-on: ubuntu-latest
+
+    # The image the project is developed in (ADR-007), so CI and a developer's
+    # machine run the same toolchain rather than two that happen to agree.
+    #
+    # This is not only about parity. The OTP build that erlef/setup-beam
+    # installs ships without dialyzer's erl_bif_types.beam, so Dialyzer could
+    # not start at all: "File not found: .../dialyzer-5.4.0.1/ebin/erl_bif_types.beam".
+    # The official image carries the same Dialyzer version, complete.
+    container:
+      image: elixir:1.20-otp-28
 
     services:
       db:
@@ -29,22 +36,23 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: pulse_ops_test
-        ports:
-          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
 
+    env:
+      # From inside a job container the database is reachable by its service
+      # label, not on localhost — which happens to be the same "db" the local
+      # compose file uses.
+      DATABASE_HOST: db
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: erlef/setup-beam@v1
-        id: beam
-        with:
-          elixir-version: "1.20"
-          otp-version: "28"
+      - name: Install Hex and rebar
+        run: mix local.hex --force && mix local.rebar --force
 
       - name: Restore dependencies and build
         uses: actions/cache@v4
@@ -52,17 +60,17 @@ jobs:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-mix-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-${{ steps.beam.outputs.elixir-version }}-
+          key: ${{ runner.os }}-elixir-1.20-otp-28-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-elixir-1.20-otp-28-mix-
 
-      # Kept separate from the build cache: the PLT is expensive to rebuild and
+      # Kept separate from the build cache: the PLT is expensive to build and
       # only changes when the dependency set does.
       - name: Restore Dialyzer PLT
         uses: actions/cache@v4
         with:
           path: priv/plts
-          key: ${{ runner.os }}-plt-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: ${{ runner.os }}-plt-${{ steps.beam.outputs.otp-version }}-
+          key: ${{ runner.os }}-elixir-1.20-otp-28-plt-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-elixir-1.20-otp-28-plt-
 
       - run: mix deps.get
 
