@@ -139,3 +139,9 @@ otherwise the dominant cost of every recompile.
 
 **Rejected.** Installing Erlang via winget plus the standalone Elixir installer, with
 only Postgres containerised. Better inner-loop latency, worse parity with CI.
+
+**Consequence.** CI runs inside the same image, as a job container, rather than
+installing a toolchain of its own. That is not only tidiness: the OTP build
+`erlef/setup-beam` provides ships without `erl_bif_types.beam`, so Dialyzer could
+not start on it at all while every other step passed. A CI that installs its own
+toolchain is a second environment to keep in agreement, and it drifted.
