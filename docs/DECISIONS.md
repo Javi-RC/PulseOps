@@ -45,7 +45,7 @@ wrong for anything past a toy dataset.
 
 ## ADR-003 — One PubSub topic per organization, and broadcasts only on state change
 
-**Decision.** The dashboard subscribes to `org:{id}:services` and `org:{id}:incidents`.
+**Decision.** The dashboard subscribes to `organization:{id}:services` and `organization:{id}:incidents`.
 Individual check results go to `service:{id}:checks`, which only the service detail
 page subscribes to. A monitor broadcasts a status message only when the status
 actually changes.

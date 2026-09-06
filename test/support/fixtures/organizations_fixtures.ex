@@ -3,6 +3,8 @@ defmodule PulseOps.OrganizationsFixtures do
   Test fixtures for `PulseOps.Organizations`.
   """
 
+  import Ecto.Query, only: [from: 2]
+
   alias PulseOps.Accounts.Scope
   alias PulseOps.Organizations
   alias PulseOps.Organizations.Membership
@@ -30,6 +32,27 @@ defmodule PulseOps.OrganizationsFixtures do
       role: role
     })
     |> Repo.insert!()
+  end
+
+  @doc """
+  Builds a fresh user, an organization they own, and a scope narrowed to it.
+
+  This is the shape the `--scope organization` generators expect.
+  """
+  def organization_scope_fixture(role \\ :owner) do
+    user = PulseOps.AccountsFixtures.user_fixture()
+    organization = organization_fixture(user)
+
+    if role != :owner do
+      Repo.update_all(
+        from(m in Membership,
+          where: m.organization_id == ^organization.id and m.user_id == ^user.id
+        ),
+        set: [role: role]
+      )
+    end
+
+    organization_scope(user, organization, role)
   end
 
   @doc """

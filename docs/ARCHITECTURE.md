@@ -101,8 +101,8 @@ read-only. Authorization is enforced in the contexts, not by hiding buttons.
 
 | Topic | Carries | Subscribed by |
 |---|---|---|
-| `org:{id}:services` | service status transitions | dashboard |
-| `org:{id}:incidents` | incident opened / changed / resolved | dashboard, incident list |
+| `organization:{id}:services` | service status transitions | dashboard |
+| `organization:{id}:incidents` | incident opened / changed / resolved | dashboard, incident list |
 | `service:{id}:checks` | every individual check result | service detail page only |
 
 See ADR-003.

@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 1 complete — Authentication and multi-tenancy |
-| Next | Phase 2 — Services CRUD, scoped to the organization |
-| Tests | 136 passing, Credo `--strict` clean |
+| Phase | 2 complete — Services CRUD |
+| Next | Phase 3 — Health checks with OTP |
+| Checks | `mix check` green: 169 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
@@ -65,20 +65,40 @@ Docker Desktop must be running. On Windows it is at
 - Tidied Credo `--strict` findings in the Phoenix-generated files so the linter is
   green from the start.
 
+### Phase 2 — Services CRUD
+
+- `mix phx.gen.live Monitoring Service services ... --scope organization`. The
+  generator emitted organization-filtered queries and PubSub broadcasting on its
+  own, because the scope config from Phase 1 was already in place.
+- `environment` and `status` are `Ecto.Enum`; URL must be http/https;
+  `check_interval_ms` 10s–1h, `timeout_ms` 1s–30s and strictly below the interval.
+- Unique index on `(organization_id, name)`, with the error reported against
+  `:name` so the form shows it on the field the user can change.
+- `status` and `last_checked_at` are **not** castable in `changeset/3` — they belong
+  to the monitor. `status_changeset/2` is the separate path the monitor will use in
+  Phase 3, and the form no longer renders those fields.
+- Writes go through `Organizations.authorize(scope, :manage_services)`; the
+  LiveViews handle `{:error, :unauthorized}` rather than crashing.
+- Routes live under `live_session :require_organization` at `/orgs/:org/services`.
+- PubSub topic emitted by the generator is `organization:{id}:services`.
+
 ## Next steps
 
-Phase 2 — Services CRUD:
+Phase 3 — Health checks with OTP. The monitor lifecycle hooks are **not** in the
+context yet; `create_service/2`, `update_service/3` and `delete_service/2` in
+`lib/pulse_ops/monitoring.ex` are where the start/restart/stop calls go.
 
-1. `mix phx.gen.live Monitoring Service services name:string description:text
-   environment:string url:string check_interval_ms:integer timeout_ms:integer
-   enabled:boolean status:string last_checked_at:utc_datetime --scope organization`
-2. Turn `environment` and `status` into `Ecto.Enum`; validate the URL scheme and
-   that `timeout_ms < check_interval_ms`; unique index on `(organization_id, name)`.
-3. Enforce `:manage_services` in the context for writes, not just in the UI.
-4. Add the `/orgs/:org` route scope with `on_mount :require_organization` — nothing
-   uses that hook yet, so Phase 2 is where it first runs for real.
-5. Leave a hook in create/update/delete to start, restart and stop monitors; it gets
-   connected in Phase 3.
+1. `PulseOps.Monitoring.Supervisor`: Registry (`:unique`), `Task.Supervisor`,
+   `MonitorSupervisor` (DynamicSupervisor), `Bootstrapper`. Add it to
+   `application.ex` after the Repo; the bootstrapper must honour
+   `Application.get_env(:pulse_ops, :start_monitors, true)` (ADR-005).
+2. `HealthCheck` behaviour + `HealthCheck.Req` implementation; point
+   `config/test.exs` at a Mox mock.
+3. `ServiceMonitor` GenServer — the HTTP request goes through
+   `Task.Supervisor.async_nolink/2`, never inline (ADR-002). Jittered
+   `Process.send_after/3`. Persist every check; broadcast only on status change.
+4. `service_checks` table, indexed `(service_id, inserted_at DESC)`.
+5. `/dev/flaky` endpoint plus seeds, so an incident can be triggered on demand.
 
 ## Traps already hit
 
