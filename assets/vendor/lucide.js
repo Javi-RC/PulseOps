@@ -20,7 +20,15 @@ module.exports = plugin(function({matchComponents, theme}) {
 
   matchComponents({
     "lucide": ({name, fullPath}) => {
-      let content = fs.readFileSync(fullPath).toString().replace(/\r?\n|\r/g, "")
+      let content = fs.readFileSync(fullPath).toString()
+        // Lucide ships its icons with width="24" height="24", which gives the
+        // mask image an intrinsic size. A mask does not scale to its box, so at
+        // any other size the icon was drawn at 24px and clipped. Heroicons ship
+        // without those attributes, which is why they never showed the problem.
+        .replace(/\s(width|height)="[^"]*"/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+
       content = encodeURIComponent(content)
 
       return {
@@ -28,9 +36,16 @@ module.exports = plugin(function({matchComponents, theme}) {
         "-webkit-mask": `var(--lucide-${name})`,
         "mask": `var(--lucide-${name})`,
         "mask-repeat": "no-repeat",
+        // Belt and braces with the stripped attributes above: the mask now
+        // fills whatever box the size utility gives the element.
+        "-webkit-mask-size": "100% 100%",
+        "mask-size": "100% 100%",
+        "-webkit-mask-position": "center",
+        "mask-position": "center",
         "background-color": "currentColor",
         "vertical-align": "middle",
         "display": "inline-block",
+        "flex-shrink": "0",
         "width": theme("spacing.5"),
         "height": theme("spacing.5")
       }
