@@ -12,6 +12,18 @@ defmodule PulseOpsWeb.PageControllerTest do
       refute html =~ "phoenixframework.org"
     end
 
+    test "draws the check cycle as a diagram with a text equivalent", %{conn: conn} do
+      html = conn |> get(~p"/") |> html_response(200)
+
+      assert html =~ "What happens on every check"
+      assert html =~ ~s(role="img")
+      # The moving dashes are decoration; the steps have to be readable without
+      # them, and the animation has to stop for anyone who asks it to.
+      assert html =~ "Read it as steps"
+      assert html =~ "prefers-reduced-motion"
+      refute html =~ "<pre"
+    end
+
     test "offers a way in", %{conn: conn} do
       html = conn |> get(~p"/") |> html_response(200)
 
