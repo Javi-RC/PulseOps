@@ -277,6 +277,37 @@ defmodule PulseOps.Monitoring do
   end
 
   @doc """
+  The most recent checks for every service in the organization, oldest first,
+  as a map of service id to its checks.
+
+  One query with a window function rather than one query per service: the
+  dashboard shows a history strip for each of them, and fanning out would make
+  the page cost grow with the number of services being monitored.
+  """
+  def recent_checks_by_service(%Scope{} = scope, limit \\ 24) do
+    ranked =
+      from c in Check,
+        join: s in Service,
+        on: s.id == c.service_id,
+        where: s.organization_id == ^scope.organization.id,
+        select: %{
+          service_id: c.service_id,
+          status: c.status,
+          response_time_ms: c.response_time_ms,
+          inserted_at: c.inserted_at,
+          row_number:
+            over(row_number(), partition_by: c.service_id, order_by: [desc: c.inserted_at])
+        }
+
+    from(r in subquery(ranked), where: r.row_number <= ^limit)
+    |> Repo.all()
+    |> Enum.group_by(& &1.service_id)
+    |> Map.new(fn {service_id, checks} ->
+      {service_id, Enum.sort_by(checks, & &1.inserted_at, DateTime)}
+    end)
+  end
+
+  @doc """
   Availability for every service in the organization over a window, as a map of
   service id to uptime percentage.
 

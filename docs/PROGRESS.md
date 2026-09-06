@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 6 complete — **MVP shipped, tagged `v0.1.0`** |
+| Phase | 7 complete — front end rebuilt, organization management shipped |
 | Next | V2 — Oban, alert rules, notifications, activity log, metric rollups |
-| Checks | `mix check` green: 273 tests, Credo `--strict` clean, Dialyzer clean |
+| Checks | `mix check` green: 329 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
@@ -163,6 +163,38 @@ entries recorded and no author.
   behind the parts of the design that look unusual.
 - Tagged `v0.1.0` on `main`.
 
+### Phase 7 — Front end and organization management
+
+- **Two navigations became one.** `root.html.heex` was still rendering the user
+  menu injected by `phx.gen.auth` above the application header.
+- Sidebar shell (`Layouts.app`) with the organization switcher, section
+  navigation and user menu, collapsing to a drawer below `lg`; `Layouts.public`
+  for the landing and authentication screens.
+- **Brand hue is violet on purpose.** Status is the only thing on a monitoring
+  screen allowed to shout, and the stock Phoenix orange sat on top of the amber
+  used for a degraded service. Violet is far from every status hue and from the
+  chart's series blue. daisyUI's `success`/`warning`/`error` are now the exact
+  status palette values, so a flash and a badge agree.
+- Organization management, which had no UI at all: `/orgs/new`,
+  `/orgs/:org/members` and `/orgs/:org/settings`. The rules live in the context —
+  the last owner cannot be demoted or removed, and an admin cannot touch an
+  owner or create one.
+- The members page carries a permission table generated from `Organizations.can?/2`,
+  so it cannot drift from what is actually enforced.
+- Services list rebuilt around status, uptime and last check, with status and
+  environment filters, replacing the generator's nine-column table.
+- The service form asks for **seconds** and converts at the boundary.
+- Landing page replaces the Phoenix welcome screen; the browser tab no longer
+  says "Phoenix Framework".
+- Chart gained x-axis time labels. Relative timestamps refresh on a 30 s tick
+  that only reassigns the clock and issues no queries.
+- Demo controls on the service page break and fix the local endpoint through a
+  LiveView event — no HTTP round trip, and hidden outside development.
+
+**Verified against the running app**, signed in through the magic-link flow:
+landing, dashboard, services list, service detail (chart with both axes),
+members and settings all render; the switcher lists both organizations.
+
 ## Next steps — V2
 
 Nothing here is started. In rough order of what adds most:
@@ -212,6 +244,13 @@ index (ADR-004) is already what makes the clustering step safe.
   it with a `GenServer.call` to synchronise before asserting on status.
 - `/dev/flaky/break` must not sit on the `:browser` pipeline: CSRF protection
   rejects the POST with a 403.
+- A `<form>` with `phx-change` needs an `id`, or LiveView warns on every render.
+- `{...}` inside a HEEx template is interpolation even inside `<pre><code>`; the
+  ASCII diagram on the landing page needs `phx-no-curly-interpolation`.
+- `attach_hook(:handle_params)` raises for a LiveView not mounted through the
+  router, which is how the `on_mount` unit tests call it — guard on `socket.router`.
+- `deps/` and `_build/` are Docker named volumes: they do **not** exist on the
+  host. Check anything in them from inside the container.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
