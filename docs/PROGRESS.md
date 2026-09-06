@@ -251,6 +251,12 @@ index (ADR-004) is already what makes the clustering step safe.
   router, which is how the `on_mount` unit tests call it — guard on `socket.router`.
 - `deps/` and `_build/` are Docker named volumes: they do **not** exist on the
   host. Check anything in them from inside the container.
+- **A CSS mask does not scale to its box.** Lucide ships its SVGs with
+  `width="24" height="24"`, which gives the mask an intrinsic size, so every icon
+  rendered at 24px no matter what size utility was on the element — larger than
+  its container and clipped. Heroicons ship without those attributes, which is
+  why they never showed it. `assets/vendor/lucide.js` now strips them and sets
+  `mask-size: 100% 100%`.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
