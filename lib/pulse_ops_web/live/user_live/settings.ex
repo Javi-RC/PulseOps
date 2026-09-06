@@ -8,7 +8,7 @@ defmodule PulseOpsWeb.UserLive.Settings do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.public flash={@flash} current_scope={@current_scope}>
       <div class="text-center">
         <.header>
           Account Settings
@@ -65,7 +65,7 @@ defmodule PulseOpsWeb.UserLive.Settings do
           Save Password
         </.button>
       </.form>
-    </Layouts.app>
+    </Layouts.public>
     """
   end
 

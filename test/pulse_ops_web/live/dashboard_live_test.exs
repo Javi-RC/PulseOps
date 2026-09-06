@@ -15,7 +15,7 @@ defmodule PulseOpsWeb.DashboardLiveTest do
     test "invites the user to add a service when there are none", %{conn: conn, scope: scope} do
       {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
 
-      assert html =~ "No services yet"
+      assert html =~ "Nothing is being watched yet"
     end
 
     test "lists services with their status", %{conn: conn, scope: scope} do

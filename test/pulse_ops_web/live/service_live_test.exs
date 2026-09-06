@@ -1,125 +1,216 @@
 defmodule PulseOpsWeb.ServiceLiveTest do
-  use PulseOpsWeb.ConnCase
+  use PulseOpsWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
   import PulseOps.IncidentsFixtures
   import PulseOps.MonitoringFixtures
   import PulseOps.OrganizationsFixtures
 
+  alias PulseOps.Monitoring
   alias PulseOps.Monitoring.HealthCheck.Result
+  alias PulseOps.Organizations.Membership
+  alias PulseOps.Repo
 
   @create_attrs %{
-    enabled: true,
     name: "Payments API",
-    description: "some description",
+    description: "Takes the money",
     url: "https://payments.example.com/health",
     environment: :production,
-    check_interval_ms: 30_000,
-    timeout_ms: 5_000
+    check_interval_seconds: 30,
+    timeout_seconds: 5,
+    enabled: true
   }
   @update_attrs %{
-    enabled: false,
     name: "Payments API v2",
-    description: "some updated description",
+    description: "Still takes the money",
     url: "https://payments.example.com/healthz",
     environment: :staging,
-    check_interval_ms: 60_000,
-    timeout_ms: 10_000
+    check_interval_seconds: 60,
+    timeout_seconds: 10,
+    enabled: false
   }
-  # environment is a select with no blank option, so the form can never submit it
+  # environment is a select with no blank option, so the form cannot submit it
   # empty; leaving it out keeps these attrs to what a browser could actually send.
-  @invalid_attrs %{
-    enabled: false,
-    name: nil,
-    description: nil,
-    url: nil,
-    check_interval_ms: nil,
-    timeout_ms: nil
-  }
+  @invalid_attrs %{name: nil, url: nil, check_interval_seconds: nil, timeout_seconds: nil}
 
   setup :register_and_log_in_user_with_org
 
   defp create_service(%{scope: scope}) do
-    service = service_fixture(scope)
-
-    %{service: service}
+    %{service: service_fixture(scope, %{name: "Payments API"})}
   end
+
+  defp services_path(scope), do: ~p"/orgs/#{scope.organization.slug}/services"
 
   describe "Index" do
     setup [:create_service]
 
-    test "lists all services", %{conn: conn, service: service, scope: scope} do
-      {:ok, _index_live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services")
+    test "lists services with their status", %{conn: conn, service: service, scope: scope} do
+      Monitoring.update_service_status(service, :healthy)
 
-      assert html =~ "Listing Services"
+      {:ok, _live, html} = live(conn, services_path(scope))
+
+      assert html =~ "Services"
       assert html =~ service.name
+      assert html =~ "Healthy"
     end
 
-    test "saves new service", %{conn: conn, scope: scope} do
-      {:ok, index_live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services")
+    test "shows the interval in a human unit, not milliseconds", %{conn: conn, scope: scope} do
+      service_fixture(scope, %{name: "Every half minute", check_interval_ms: 30_000})
 
-      assert {:ok, form_live, _} =
-               index_live
-               |> element("a", "New Service")
-               |> render_click()
-               |> follow_redirect(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+      {:ok, _live, html} = live(conn, services_path(scope))
 
-      assert render(form_live) =~ "New Service"
-
-      assert form_live
-             |> form("#service-form", service: @invalid_attrs)
-             |> render_change() =~ "can&#39;t be blank"
-
-      assert {:ok, index_live, _html} =
-               form_live
-               |> form("#service-form", service: @create_attrs)
-               |> render_submit()
-               |> follow_redirect(conn, ~p"/orgs/#{scope.organization.slug}/services")
-
-      html = render(index_live)
-      assert html =~ "Service created successfully"
-      assert html =~ "Payments API"
+      assert html =~ "every 30 s"
+      refute html =~ "30000"
     end
 
-    test "updates service in listing", %{conn: conn, service: service, scope: scope} do
-      {:ok, index_live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services")
+    test "puts failing services above healthy ones", %{conn: conn, scope: scope} do
+      healthy = service_fixture(scope, %{name: "AAA Healthy"})
+      broken = service_fixture(scope, %{name: "ZZZ Broken"})
+      Monitoring.update_service_status(healthy, :healthy)
+      Monitoring.update_service_status(broken, :down)
 
-      assert {:ok, form_live, _html} =
-               index_live
-               |> element("#services-#{service.id} a", "Edit")
-               |> render_click()
-               |> follow_redirect(
-                 conn,
-                 ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit"
-               )
+      {:ok, _live, html} = live(conn, services_path(scope))
 
-      assert render(form_live) =~ "Edit Service"
-
-      assert form_live
-             |> form("#service-form", service: @invalid_attrs)
-             |> render_change() =~ "can&#39;t be blank"
-
-      assert {:ok, index_live, _html} =
-               form_live
-               |> form("#service-form", service: @update_attrs)
-               |> render_submit()
-               |> follow_redirect(conn, ~p"/orgs/#{scope.organization.slug}/services")
-
-      html = render(index_live)
-      assert html =~ "Service updated successfully"
-      assert html =~ "Payments API v2"
+      assert html =~ ~r/ZZZ Broken.*AAA Healthy/s
     end
 
-    test "deletes service in listing", %{conn: conn, service: service, scope: scope} do
-      {:ok, index_live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services")
+    test "filters by status", %{conn: conn, scope: scope, service: service} do
+      Monitoring.update_service_status(service, :healthy)
+      broken = service_fixture(scope, %{name: "Broken One"})
+      Monitoring.update_service_status(broken, :down)
 
-      assert index_live |> element("#services-#{service.id} a", "Delete") |> render_click()
-      refute has_element?(index_live, "#services-#{service.id}")
+      {:ok, live, _html} = live(conn, services_path(scope))
+
+      html =
+        live
+        |> element("button[phx-value-key=status][phx-value-value=down]")
+        |> render_click()
+
+      assert html =~ "Broken One"
+      refute html =~ "Payments API"
+    end
+
+    test "filters by environment", %{conn: conn, scope: scope} do
+      service_fixture(scope, %{name: "Staging Thing", environment: :staging})
+
+      {:ok, live, _html} = live(conn, services_path(scope))
+
+      html =
+        live
+        |> element("button[phx-value-key=environment][phx-value-value=staging]")
+        |> render_click()
+
+      assert html =~ "Staging Thing"
+      refute html =~ "Payments API"
+    end
+
+    test "says so when the filters match nothing", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, services_path(scope))
+
+      html =
+        live
+        |> element("button[phx-value-key=status][phx-value-value=down]")
+        |> render_click()
+
+      assert html =~ "Nothing matches these filters"
+    end
+
+    test "invites the first service when there are none", %{
+      conn: conn,
+      scope: scope,
+      service: service
+    } do
+      {:ok, _service} = Monitoring.delete_service(scope, service)
+
+      {:ok, _live, html} = live(conn, services_path(scope))
+
+      assert html =~ "No services yet"
+    end
+
+    test "deletes a service", %{conn: conn, service: service, scope: scope} do
+      {:ok, live, _html} = live(conn, services_path(scope))
+
+      html = live |> element(~s{button[phx-value-id="#{service.id}"]}) |> render_click()
+
+      # The flash names the deleted service, so check the row is gone rather
+      # than that the name is absent from the page.
+      refute html =~ ~s(id="service-#{service.id}")
+      assert Monitoring.list_services(scope) == []
+    end
+
+    test "a viewer sees no write actions", %{conn: conn, scope: scope, user: user} do
+      demote_to_viewer(scope, user)
+
+      {:ok, _live, html} = live(conn, services_path(scope))
+
+      refute html =~ "New service"
+      refute html =~ "phx-click=\"delete\""
     end
   end
 
-  describe "Show with history" do
+  describe "Form" do
+    test "creates a service, taking the interval in seconds", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      assert live
+             |> form("#service-form", service: @invalid_attrs)
+             |> render_change() =~ "can&#39;t be blank"
+
+      assert {:ok, _live, html} =
+               live
+               |> form("#service-form", service: @create_attrs)
+               |> render_submit()
+               |> follow_redirect(conn, services_path(scope))
+
+      assert html =~ "Service created"
+      assert html =~ "Payments API"
+
+      service = Monitoring.list_services(scope) |> List.first()
+      # Seconds in, milliseconds stored.
+      assert service.check_interval_ms == 30_000
+      assert service.timeout_ms == 5_000
+    end
+
+    test "reports a timeout that does not fit the interval", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      html =
+        live
+        |> form("#service-form",
+          service: %{@create_attrs | check_interval_seconds: 10, timeout_seconds: 10}
+        )
+        |> render_change()
+
+      assert html =~ "must be shorter than the check interval"
+    end
+
+    test "edits a service", %{conn: conn, scope: scope} do
+      service = service_fixture(scope)
+
+      {:ok, live, _html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit")
+
+      assert {:ok, _live, html} =
+               live
+               |> form("#service-form", service: @update_attrs)
+               |> render_submit()
+               |> follow_redirect(conn, services_path(scope))
+
+      assert html =~ "Service updated"
+      assert html =~ "Payments API v2"
+    end
+  end
+
+  describe "Show" do
     setup [:create_service]
+
+    test "displays the service", %{conn: conn, service: service, scope: scope} do
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      assert html =~ service.name
+      assert html =~ service.url
+    end
 
     test "renders the chart and the metrics once there are checks", %{
       conn: conn,
@@ -129,13 +220,11 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       # The page previously only ever got exercised with an empty history, which
       # is why a crash in the plot geometry went unnoticed.
       for ms <- [120, 340, 95, 780] do
-        PulseOps.Monitoring.record_check(service, :healthy, %Result{
-          http_status: 200,
-          response_time_ms: ms
-        })
+        Monitoring.record_check(service, :healthy, %Result{http_status: 200, response_time_ms: ms})
       end
 
-      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
 
       assert html =~ "<polyline"
       assert html =~ "780 ms"
@@ -144,10 +233,28 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       assert html =~ "p95"
     end
 
+    test "keeps the demo controls out of anything but development", %{
+      conn: conn,
+      service: service,
+      scope: scope
+    } do
+      {:ok, updated} =
+        Monitoring.update_service(scope, service, %{url: "http://localhost:4000/dev/flaky"})
+
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{updated}")
+
+      # dev_routes is off outside development, so the buttons must not appear
+      # even for the service they would act on.
+      refute html =~ "Demo controls"
+      refute html =~ "break_demo_service"
+    end
+
     test "shows an open incident with a link to it", %{conn: conn, service: service, scope: scope} do
       incident = incident_fixture(service)
 
-      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
 
       assert html =~ "Open incident since"
       assert html =~ "/incidents/#{incident.id}"
@@ -161,17 +268,15 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       outsider_scope = organization_scope_fixture()
 
       assert {:error, {:redirect, %{to: "/", flash: %{"error" => message}}}} =
-               live(conn, ~p"/orgs/#{outsider_scope.organization.slug}/services")
+               live(conn, services_path(outsider_scope))
 
       assert message == "Organization not found."
     end
 
-    test "redirects for an organization that does not exist", %{conn: conn} do
+    test "reports a missing organization the same way as a forbidden one", %{conn: conn} do
       assert {:error, {:redirect, %{to: "/", flash: %{"error" => message}}}} =
                live(conn, ~p"/orgs/no-such-org/services")
 
-      # Same message as the forbidden case: the route must not reveal which
-      # organizations exist.
       assert message == "Organization not found."
     end
 
@@ -185,45 +290,9 @@ defmodule PulseOpsWeb.ServiceLiveTest do
     end
   end
 
-  describe "Show" do
-    setup [:create_service]
-
-    test "displays service", %{conn: conn, service: service, scope: scope} do
-      {:ok, _show_live, html} =
-        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
-
-      assert html =~ service.name
-      assert html =~ service.url
-    end
-
-    test "updates service and returns to show", %{conn: conn, service: service, scope: scope} do
-      {:ok, show_live, _html} =
-        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
-
-      assert {:ok, form_live, _} =
-               show_live
-               |> element("a", "Edit")
-               |> render_click()
-               |> follow_redirect(
-                 conn,
-                 ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit?return_to=show"
-               )
-
-      assert render(form_live) =~ "Edit Service"
-
-      assert form_live
-             |> form("#service-form", service: @invalid_attrs)
-             |> render_change() =~ "can&#39;t be blank"
-
-      assert {:ok, show_live, _html} =
-               form_live
-               |> form("#service-form", service: @update_attrs)
-               |> render_submit()
-               |> follow_redirect(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
-
-      html = render(show_live)
-      assert html =~ "Service updated successfully"
-      assert html =~ "Payments API v2"
-    end
+  defp demote_to_viewer(scope, user) do
+    Repo.get_by!(Membership, organization_id: scope.organization.id, user_id: user.id)
+    |> Ecto.Changeset.change(role: :viewer)
+    |> Repo.update!()
   end
 end

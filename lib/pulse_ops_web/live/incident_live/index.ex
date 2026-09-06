@@ -35,7 +35,12 @@ defmodule PulseOpsWeb.IncidentLive.Index do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      organizations={@organizations}
+      current_path={@current_path}
+    >
       <.header>
         Incidents
         <:subtitle>Opened and resolved automatically by the monitors.</:subtitle>

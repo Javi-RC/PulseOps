@@ -100,7 +100,12 @@ defmodule PulseOpsWeb.IncidentLive.Show do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      organizations={@organizations}
+      current_path={@current_path}
+    >
       <.link
         navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents"}
         class="text-sm text-base-content/60 hover:underline"

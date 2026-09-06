@@ -22,76 +22,84 @@
   themes: false;
 }
 
-/* daisyUI theme plugin.
-  We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
-  on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
-@plugin "daisyui/packages/bundle/daisyui-theme" {
-  name: "dark";
-  default: false;
-  prefersdark: true;
-  color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
-  --color-info: oklch(58% 0.158 241.966);
-  --color-info-content: oklch(97% 0.013 236.62);
-  --color-success: oklch(60% 0.118 184.704);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
-  --noise: 0;
-}
+/* The brand hue is violet, deliberately.
+   Status is the only thing on a monitoring screen allowed to shout, and its
+   palette is green / amber / orange / red. A brand colour anywhere in that
+   range competes with it — the stock Phoenix orange sat right on top of the
+   amber used for "degraded". Violet is far from every status hue and far
+   enough from the chart's series blue (#2a78d6) that the two never read as
+   the same thing.
+
+   success / warning / error below are the exact status palette values, so a
+   flash message and a status badge agree with each other. */
 
 @plugin "daisyui/packages/bundle/daisyui-theme" {
   name: "light";
   default: true;
   prefersdark: false;
   color-scheme: "light";
-  --color-base-100: oklch(98% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(97.5% 0.002 286.32);
+  --color-base-300: oklch(91% 0.004 286.32);
   --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
-  --color-accent-content: oklch(100% 0 0);
-  --color-neutral: oklch(44% 0.017 285.786);
+  --color-primary: oklch(51% 0.23 293.5);
+  --color-primary-content: oklch(98% 0.012 293.5);
+  --color-secondary: oklch(44% 0.017 285.786);
+  --color-secondary-content: oklch(98% 0 0);
+  --color-accent: oklch(60% 0.19 293.5);
+  --color-accent-content: oklch(98% 0.012 293.5);
+  --color-neutral: oklch(27% 0.006 286);
   --color-neutral-content: oklch(98% 0 0);
-  --color-info: oklch(62% 0.214 259.815);
-  --color-info-content: oklch(97% 0.014 254.604);
-  --color-success: oklch(70% 0.14 182.503);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
+  --color-info: #2a78d6;
+  --color-info-content: oklch(98% 0.013 254.604);
+  --color-success: #0ca30c;
+  --color-success-content: oklch(98% 0.014 160);
+  --color-warning: #fab219;
+  --color-warning-content: oklch(25% 0.05 80);
+  --color-error: #d03b3b;
+  --color-error-content: oklch(98% 0.015 12.422);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/packages/bundle/daisyui-theme" {
+  name: "dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: "dark";
+  --color-base-100: oklch(21% 0.006 285.885);
+  --color-base-200: oklch(17% 0.006 285.885);
+  --color-base-300: oklch(27% 0.008 285.885);
+  --color-base-content: oklch(96% 0.002 286.32);
+  --color-primary: oklch(70% 0.16 293.5);
+  --color-primary-content: oklch(19% 0.06 293.5);
+  --color-secondary: oklch(70% 0.012 286);
+  --color-secondary-content: oklch(19% 0.006 286);
+  --color-accent: oklch(76% 0.13 293.5);
+  --color-accent-content: oklch(19% 0.06 293.5);
+  --color-neutral: oklch(32% 0.008 286);
+  --color-neutral-content: oklch(96% 0.002 286);
+  --color-info: #3987e5;
+  --color-info-content: oklch(15% 0.03 254.604);
+  --color-success: #0ca30c;
+  --color-success-content: oklch(15% 0.03 160);
+  --color-warning: #fab219;
+  --color-warning-content: oklch(20% 0.05 80);
+  --color-error: #d03b3b;
+  --color-error-content: oklch(98% 0.015 12.422);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
   --noise: 0;
 }
 
@@ -106,4 +114,15 @@
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
-/* This file is for your main application CSS */
+@layer base {
+  /* Anchors and buttons reached by keyboard get the same visible ring as the
+     ones reached by mouse hover — the sidebar is entirely keyboard navigable. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-primary) 25%, transparent);
+  }
+}

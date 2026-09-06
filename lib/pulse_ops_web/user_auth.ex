@@ -246,12 +246,22 @@ defmodule PulseOpsWeb.UserAuth do
     if scope && scope.user do
       case Organizations.fetch_for_user(slug, scope.user) do
         {:ok, organization, role} ->
-          {:cont,
-           Phoenix.Component.assign(
-             socket,
-             :current_scope,
-             Scope.put_organization(scope, organization, role)
-           )}
+          socket =
+            socket
+            |> Phoenix.Component.assign(
+              :current_scope,
+              Scope.put_organization(scope, organization, role)
+            )
+            # The shell needs both to render: the switcher lists them, and the
+            # navigation marks the active section. Assigning here keeps the
+            # layout from having to reach for the database itself.
+            |> Phoenix.Component.assign(
+              :organizations,
+              Organizations.list_organizations_for_user(scope.user)
+            )
+            |> track_current_path()
+
+          {:cont, socket}
 
         # A non-member gets the same answer as a non-existent slug, so this
         # cannot be used to enumerate organizations.
@@ -276,6 +286,21 @@ defmodule PulseOpsWeb.UserAuth do
         |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
 
       {:halt, socket}
+    end
+  end
+
+  # LiveView does not hand the current path to the layout, so it is captured on
+  # every navigation and assigned; the sidebar reads it to mark the active item.
+  defp track_current_path(socket) do
+    # Only a LiveView mounted through the router gets handle_params at all, so
+    # one rendered inside another view keeps the assign at its default.
+    if socket.router do
+      Phoenix.LiveView.attach_hook(socket, :track_current_path, :handle_params, fn
+        _params, uri, socket ->
+          {:cont, Phoenix.Component.assign(socket, :current_path, URI.parse(uri).path)}
+      end)
+    else
+      Phoenix.Component.assign_new(socket, :current_path, fn -> nil end)
     end
   end
 

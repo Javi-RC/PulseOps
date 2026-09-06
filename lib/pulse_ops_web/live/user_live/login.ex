@@ -6,7 +6,7 @@ defmodule PulseOpsWeb.UserLive.Login do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.public flash={@flash} current_scope={@current_scope} centered>
       <div class="mx-auto max-w-sm space-y-4">
         <div class="text-center">
           <.header>
@@ -91,7 +91,7 @@ defmodule PulseOpsWeb.UserLive.Login do
           </.button>
         </.form>
       </div>
-    </Layouts.app>
+    </Layouts.public>
     """
   end
 

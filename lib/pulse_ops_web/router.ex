@@ -67,6 +67,7 @@ defmodule PulseOpsWeb.Router do
       on_mount: [{PulseOpsWeb.UserAuth, :require_authenticated}] do
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
+      live "/orgs/new", OrganizationLive.Form, :new
     end
 
     # Tenant routes. :require_organization resolves the :org slug, checks
@@ -81,6 +82,8 @@ defmodule PulseOpsWeb.Router do
       live "/orgs/:org/services/new", ServiceLive.Form, :new
       live "/orgs/:org/services/:id", ServiceLive.Show, :show
       live "/orgs/:org/services/:id/edit", ServiceLive.Form, :edit
+      live "/orgs/:org/members", MemberLive.Index, :index
+      live "/orgs/:org/settings", OrganizationLive.Settings, :edit
     end
 
     post "/users/update-password", UserSessionController, :update_password

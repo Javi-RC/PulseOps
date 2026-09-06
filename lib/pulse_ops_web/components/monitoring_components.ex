@@ -192,6 +192,20 @@ defmodule PulseOpsWeb.MonitoringComponents do
           stroke-width="1"
         />
 
+        <g>
+          <text
+            :for={tick <- @plot.x_ticks}
+            x={tick.x}
+            y={tick.y}
+            text-anchor={tick.anchor}
+            font-size="11"
+            style="font-variant-numeric: tabular-nums"
+            fill="var(--viz-muted)"
+          >
+            {tick.label}
+          </text>
+        </g>
+
         <polyline
           points={@plot.points}
           fill="none"
@@ -293,13 +307,17 @@ defmodule PulseOpsWeb.MonitoringComponents do
 
   @doc """
   A timestamp rendered as how long ago it was.
+
+  Pass `now` from a page that ticks, so "3 min ago" keeps counting instead of
+  freezing until the next broadcast arrives.
   """
   attr :at, :any, required: true
   attr :class, :string, default: nil
+  attr :now, :any, default: nil
 
   def relative_time(assigns) do
     ~H"""
-    <span class={@class} title={@at && to_string(@at)}>{format_relative(@at)}</span>
+    <span class={@class} title={@at && to_string(@at)}>{format_relative(@at, @now)}</span>
     """
   end
 
@@ -308,10 +326,11 @@ defmodule PulseOpsWeb.MonitoringComponents do
   @doc """
   Human-readable "3 min ago".
   """
-  def format_relative(nil), do: "never"
+  def format_relative(at, now \\ nil)
+  def format_relative(nil, _now), do: "never"
 
-  def format_relative(at) do
-    case DateTime.diff(DateTime.utc_now(), at) do
+  def format_relative(at, now) do
+    case DateTime.diff(now || DateTime.utc_now(), at) do
       seconds when seconds < 60 -> "just now"
       seconds when seconds < 3_600 -> "#{div(seconds, 60)} min ago"
       seconds when seconds < 86_400 -> "#{div(seconds, 3_600)} h ago"
@@ -451,6 +470,7 @@ defmodule PulseOpsWeb.MonitoringComponents do
       max_value: max_value,
       points: Enum.map_join(coords, " ", &"#{&1.x},#{&1.y}"),
       ticks: build_ticks(scale_max, baseline, plot_height),
+      x_ticks: build_x_ticks(coords, baseline),
       labelled: labelled_points(coords),
       slices: Enum.map(coords, &to_slice(&1, step))
     }
@@ -478,6 +498,25 @@ defmodule PulseOpsWeb.MonitoringComponents do
     |> Map.put(:slice_x, round2(left))
     |> Map.put(:slice_width, round2(right - left))
     |> Map.put(:readout, "#{coord.value} ms · #{format_time(coord.check.inserted_at)}")
+  end
+
+  # Three labels only — first, middle and last. A tick under every point would
+  # collide with itself, and the plot's job is the shape, not the timetable.
+  defp build_x_ticks(coords, baseline) do
+    count = length(coords)
+
+    [0, div(count - 1, 2), count - 1]
+    |> Enum.uniq()
+    |> Enum.map(fn index ->
+      coord = Enum.at(coords, index)
+
+      %{
+        x: coord.x,
+        y: baseline + 16,
+        anchor: coord.anchor,
+        label: format_time(coord.check.inserted_at)
+      }
+    end)
   end
 
   defp build_ticks(scale_max, baseline, plot_height) do
