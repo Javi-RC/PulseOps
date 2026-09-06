@@ -4,9 +4,11 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
   use PulseOps.DataCase, async: false
 
   import Mox
+  import PulseOps.IncidentsFixtures
   import PulseOps.MonitoringFixtures
   import PulseOps.OrganizationsFixtures
 
+  alias PulseOps.Incidents
   alias PulseOps.Monitoring
   alias PulseOps.Monitoring.HealthCheck.Result
   alias PulseOps.Monitoring.HealthCheckMock
@@ -189,6 +191,119 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
       # Three healthy probes, one status change, no repeated announcements: this
       # is what keeps the dashboard from re-rendering on every tick (ADR-003).
       refute_receive {:updated, _service}, 200
+    end
+  end
+
+  describe "incidents" do
+    test "opens one when the service goes down", %{scope: scope, service: service} do
+      Incidents.subscribe_incidents(scope)
+
+      stub_result(fn -> down("connection refused") end)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      assert_receive {:incident_opened, incident}
+      assert incident.service_id == service.id
+      assert incident.status == :open
+      assert incident.severity == :critical
+
+      assert %{events: [event]} = Incidents.get_incident!(scope, incident.id)
+      assert event.type == :detected
+      assert event.description =~ "connection refused"
+    end
+
+    test "does not open a second one while the service stays down", %{
+      scope: scope,
+      service: service
+    } do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+      probe(service)
+      probe(service)
+
+      assert length(Incidents.list_active_incidents(scope)) == 1
+    end
+
+    test "resolves it when the service recovers", %{scope: scope, service: service} do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+      assert [incident] = Incidents.list_active_incidents(scope)
+
+      stub_result(&healthy/0)
+      probe(service)
+      probe(service)
+
+      assert Incidents.list_active_incidents(scope) == []
+
+      resolved = Incidents.get_incident!(scope, incident.id)
+      assert resolved.status == :resolved
+      assert resolved.resolved_at
+      # Closed by the monitor, so no person is credited with it.
+      assert resolved.resolved_by_id == nil
+      assert Enum.any?(resolved.events, &(&1.type == :recovered))
+    end
+
+    test "opens a fresh incident on a second outage", %{scope: scope, service: service} do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      stub_result(&healthy/0)
+      probe(service)
+      probe(service)
+
+      stub_result(&down/0)
+      probe(service)
+      probe(service)
+      probe(service)
+
+      assert length(Incidents.list_incidents(scope)) == 2
+      assert length(Incidents.list_active_incidents(scope)) == 1
+    end
+
+    test "opens one on startup for a service that was already down", %{
+      scope: scope,
+      service: service
+    } do
+      # Simulates a restart: the service is recorded as down, so the monitor
+      # starts in :down and never sees a transition to fire the hook.
+      down_service = Monitoring.update_service_status(service, :down)
+      assert Incidents.list_active_incidents(scope) == []
+
+      stub_result(&down/0)
+      start_monitor(down_service)
+
+      assert [incident] = Incidents.list_active_incidents(scope)
+      assert incident.service_id == service.id
+    end
+
+    test "closes a stale incident on startup for a service that is healthy", %{
+      scope: scope,
+      service: service
+    } do
+      incident_fixture(service)
+      healthy_service = Monitoring.update_service_status(service, :healthy)
+      assert length(Incidents.list_active_incidents(scope)) == 1
+
+      stub_result(&healthy/0)
+      start_monitor(healthy_service)
+
+      assert Incidents.list_active_incidents(scope) == []
+    end
+
+    test "a degraded service does not open an incident", %{scope: scope, service: service} do
+      stub_result(fn -> healthy(4_000) end)
+      start_monitor(service)
+      probe(service)
+
+      assert ServiceMonitor.status(service.id).status == :degraded
+      assert Incidents.list_active_incidents(scope) == []
     end
   end
 

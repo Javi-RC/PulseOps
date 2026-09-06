@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 3 complete — Health checks with OTP |
-| Next | Phase 4 — Incidents and PubSub |
-| Checks | `mix check` green: 185 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | 4 complete — Incidents |
+| Next | Phase 5 — Real-time dashboard |
+| Checks | `mix check` green: 221 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
@@ -106,17 +106,48 @@ Docker Desktop must be running. On Windows it is at
 down after exactly 3 failed probes, and breaking the flaky endpoint drove
 `API Gateway` healthy → down → healthy on the real thresholds.
 
+### Phase 4 — Incidents
+
+- `PulseOps.Incidents` is its own context: incidents have a lifecycle of their
+  own, people act on them, and Phase 5 gives them their own LiveView.
+- `incidents` and `incident_events`, with the partial unique index
+  `incidents_one_open_per_service` (ADR-004). `open_incident/2` treats the
+  constraint violation as "already open" and returns the existing incident, so a
+  race ends in one insert and one no-op.
+- Opened on the transition to `:down`, resolved on the transition back. The hook
+  sits in `ServiceMonitor.transition/3`, the single place a status change passes
+  through.
+- **Monitors also reconcile at startup** (ADR-008) — without it, restarting with a
+  service already down left the outage with no incident.
+- Severity from the environment: production `:critical`, staging `:high`,
+  development `:medium`. Alert rules replace this in V2.
+- `status` cannot be set to `:resolved` through the workflow changeset; resolving
+  is its own operation because it also stamps who did it and when.
+- Automatic events have a null `user_id`, which is what separates "the monitor
+  saw this" from "somebody did this" on the timeline.
+- Responding to incidents needs `:respond_to_incidents`, so a `viewer` is locked
+  out but a `member` is not.
+
+**Verified against the running app:** breaking the flaky endpoint opened a
+critical incident carrying the real failure reason ("unexpected HTTP status 503"),
+and healing it resolved the incident automatically after 42 s with both timeline
+entries recorded and no author.
+
 ## Next steps
 
-Phase 4 — Incidents and PubSub:
+Phase 5 — Real-time dashboard. Read the `dataviz` skill **before** writing the
+response-time chart, not after.
 
-1. `incidents` and `incident_events` tables, with the partial unique index from
-   ADR-004: `CREATE UNIQUE INDEX ON incidents (service_id) WHERE resolved_at IS NULL`.
-2. Open an incident on the transition to `:down`, resolve it on the transition
-   back to `:healthy`. The hook goes in `ServiceMonitor.transition/2`, which is
-   already the single place a status change passes through.
-3. Treat the unique violation as "already open", not as an error.
-4. Broadcast on `organization:{id}:incidents`.
+1. `DashboardLive` at `/orgs/:org` — services with status, uptime and the active
+   incidents. Subscribe to `organization:{id}:services` and
+   `organization:{id}:incidents` in `mount/3` when `connected?`; use `stream/3`.
+2. `ServiceLive.Show` — check history, response-time chart, p50/p95/p99, uptime.
+   Subscribe to `service:{id}:checks` here and only here.
+3. `IncidentLive.Show` — timeline, workflow status, cause, resolve.
+4. Shared components: `status_badge`, `uptime_bar`, `severity_tag`, `relative_time`.
+5. Uptime and percentiles must be aggregated in SQL, not by loading every check.
+6. **No polling anywhere.** The one acceptable timer is a tick that refreshes
+   "3 min ago" labels without querying.
 
 ## Traps already hit
 

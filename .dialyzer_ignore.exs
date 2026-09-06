@@ -10,5 +10,6 @@
   # `list_unused_filters: true` in mix.exs makes the build complain if either
   # entry stops being needed.
   {"lib/pulse_ops/accounts.ex", :call_without_opaque},
-  {"lib/pulse_ops/organizations.ex", :call_without_opaque}
+  {"lib/pulse_ops/organizations.ex", :call_without_opaque},
+  {"lib/pulse_ops/incidents.ex", :call_without_opaque}
 ]
