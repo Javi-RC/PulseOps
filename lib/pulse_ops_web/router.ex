@@ -56,6 +56,17 @@ defmodule PulseOpsWeb.Router do
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
 
+    # Tenant routes. :require_organization resolves the :org slug, checks
+    # membership and narrows current_scope, so every LiveView below it can only
+    # reach data belonging to that organization.
+    live_session :require_organization,
+      on_mount: [{PulseOpsWeb.UserAuth, :require_organization}] do
+      live "/orgs/:org/services", ServiceLive.Index, :index
+      live "/orgs/:org/services/new", ServiceLive.Form, :new
+      live "/orgs/:org/services/:id", ServiceLive.Show, :show
+      live "/orgs/:org/services/:id/edit", ServiceLive.Form, :edit
+    end
+
     post "/users/update-password", UserSessionController, :update_password
   end
 
