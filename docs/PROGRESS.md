@@ -92,6 +92,10 @@ Phase 2 — Services CRUD:
   failed with "cannot invoke sandbox operation with pool DBConnection.ConnectionPool".
 - Elixir 1.20 warns about files under `test/support` not matching the test filters;
   `test_ignore_filters` in `mix.exs` handles it.
+- Dialyzer flags `call_without_opaque` on every `Multi.new() |> Multi.insert(...)`
+  chain under OTP 28 — an upstream Ecto/MapSet opacity issue. Filtered narrowly in
+  `.dialyzer_ignore.exs`; `list_unused_filters: true` means the build complains if
+  the filter ever becomes unnecessary.
 - `user_fixture/0` now creates a personal organization as a side effect of
   registration. Tests that count a user's organizations must account for it.
 
