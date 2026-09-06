@@ -12,11 +12,17 @@ defmodule PulseOps.Application do
       PulseOps.Repo,
       {DNSCluster, query: Application.get_env(:pulse_ops, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: PulseOps.PubSub},
-      # Start a worker by calling: PulseOps.Worker.start_link(arg)
-      # {PulseOps.Worker, arg},
+      # Needs the Repo and PubSub above it: monitors read services on boot and
+      # broadcast status changes.
+      PulseOps.Monitoring.Supervisor,
       # Start to serve requests, typically the last entry
       PulseOpsWeb.Endpoint
     ]
+
+    children =
+      if Application.get_env(:pulse_ops, :dev_routes),
+        do: children ++ [PulseOpsWeb.Flaky],
+        else: children
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
