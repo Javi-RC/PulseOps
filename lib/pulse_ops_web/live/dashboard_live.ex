@@ -79,7 +79,12 @@ defmodule PulseOpsWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      organizations={@organizations}
+      current_path={@current_path}
+    >
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 class="text-2xl font-semibold">{@current_scope.organization.name}</h1>

@@ -159,4 +159,147 @@ defmodule PulseOps.Organizations do
   def authorize(scope, action) do
     if can?(scope, action), do: :ok, else: {:error, :unauthorized}
   end
+
+  ## Members
+
+  @doc """
+  Everyone in the scoped organization, owners first, then alphabetically.
+  """
+  def list_members(%Scope{} = scope) do
+    Repo.all(
+      from m in Membership,
+        where: m.organization_id == ^scope.organization.id,
+        join: u in assoc(m, :user),
+        order_by: [asc: u.email],
+        preload: [user: u]
+    )
+    # Role rank is an ordering of an enum, not of a column; sorting it in SQL
+    # would mean a CASE expression for no gain on a list this size.
+    |> Enum.sort_by(&{role_rank(&1.role), &1.user.email})
+  end
+
+  defp role_rank(role), do: Enum.find_index(Membership.roles(), &(&1 == role))
+
+  @doc """
+  Fetches a membership belonging to the scoped organization.
+  """
+  def get_member!(%Scope{} = scope, id) do
+    Membership
+    |> where([m], m.id == ^id and m.organization_id == ^scope.organization.id)
+    |> preload(:user)
+    |> Repo.one!()
+  end
+
+  @doc """
+  Adds an already registered user to the organization.
+
+  Returns `{:error, :not_found}` when nobody is registered with that address.
+  Sending an invitation to a stranger needs its own token and email flow, which
+  is not built yet — this is deliberately the smaller thing.
+  """
+  def add_member(%Scope{} = scope, email, role) do
+    with :ok <- authorize(scope, :manage_organization),
+         :ok <- authorize_role_assignment(scope, role),
+         %User{} = user <- Repo.get_by(User, email: String.downcase(String.trim(email))) do
+      %Membership{}
+      |> Membership.changeset(%{
+        organization_id: scope.organization.id,
+        user_id: user.id,
+        role: role
+      })
+      |> Repo.insert()
+      |> case do
+        {:ok, membership} -> {:ok, Repo.preload(membership, :user)}
+        {:error, changeset} -> {:error, changeset}
+      end
+    else
+      nil -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Changes a member's role.
+  """
+  def update_member_role(%Scope{} = scope, %Membership{} = membership, role) do
+    with :ok <- authorize(scope, :manage_organization),
+         :ok <- ensure_same_organization(scope, membership),
+         :ok <- authorize_role_assignment(scope, role),
+         :ok <- authorize_target(scope, membership),
+         :ok <- ensure_not_last_owner(membership, role) do
+      membership
+      |> Membership.changeset(%{role: role})
+      |> Repo.update()
+      |> case do
+        {:ok, updated} -> {:ok, Repo.preload(updated, :user)}
+        {:error, changeset} -> {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
+  Removes a member from the organization.
+  """
+  def remove_member(%Scope{} = scope, %Membership{} = membership) do
+    with :ok <- authorize(scope, :manage_organization),
+         :ok <- ensure_same_organization(scope, membership),
+         :ok <- authorize_target(scope, membership),
+         :ok <- ensure_not_last_owner(membership, nil) do
+      Repo.delete(membership)
+    end
+  end
+
+  @doc """
+  Renames an organization or changes its slug.
+  """
+  def update_organization(%Scope{} = scope, %Organization{} = organization, attrs) do
+    true = organization.id == scope.organization.id
+
+    with :ok <- authorize(scope, :manage_organization) do
+      organization
+      |> Organization.changeset(attrs)
+      |> Repo.update()
+    end
+  end
+
+  @doc """
+  How many owners the organization has.
+  """
+  def owner_count(organization_id) do
+    Repo.aggregate(
+      from(m in Membership, where: m.organization_id == ^organization_id and m.role == :owner),
+      :count
+    )
+  end
+
+  # An organization with no owner cannot be administered by anybody, including
+  # the person who just locked themselves out of it.
+  defp ensure_not_last_owner(%Membership{role: :owner} = membership, new_role)
+       when new_role != :owner do
+    if owner_count(membership.organization_id) <= 1 do
+      {:error, :last_owner}
+    else
+      :ok
+    end
+  end
+
+  defp ensure_not_last_owner(_membership, _new_role), do: :ok
+
+  # An admin manages members, but promoting somebody to owner — or editing an
+  # existing owner — is an owner's decision.
+  defp authorize_role_assignment(%Scope{role: :owner}, _role), do: :ok
+  defp authorize_role_assignment(_scope, :owner), do: {:error, :owner_required}
+  defp authorize_role_assignment(_scope, _role), do: :ok
+
+  defp authorize_target(%Scope{role: :owner}, _membership), do: :ok
+  defp authorize_target(_scope, %Membership{role: :owner}), do: {:error, :owner_required}
+  defp authorize_target(_scope, _membership), do: :ok
+
+  defp ensure_same_organization(%Scope{} = scope, %Membership{} = membership) do
+    if membership.organization_id == scope.organization.id do
+      :ok
+    else
+      {:error, :not_found}
+    end
+  end
 end
