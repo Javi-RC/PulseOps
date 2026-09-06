@@ -21,6 +21,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
   require Logger
 
+  alias PulseOps.Incidents
   alias PulseOps.Monitoring
   alias PulseOps.Monitoring.HealthCheck
   alias PulseOps.Monitoring.HealthCheck.Result
@@ -102,7 +103,28 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
     # First probe is almost immediate so a newly created service shows a real
     # status quickly, but still spread out so a mass restart does not stampede.
-    {:ok, schedule_check(state, :initial)}
+    {:ok, schedule_check(state, :initial), {:continue, :reconcile_incident}}
+  end
+
+  # Incidents are opened on a status *transition*, so a restart while a service
+  # is already down would otherwise leave it with no incident at all: the monitor
+  # starts in :down, never transitions, and nothing fires. Reconciling once at
+  # startup keeps the invariant "a down service has an open incident" true across
+  # restarts and crashes.
+  @impl true
+  def handle_continue(:reconcile_incident, state) do
+    case state.status do
+      :down ->
+        Incidents.open_incident(state.service)
+
+      status when status in [:healthy, :degraded] ->
+        Incidents.resolve_open_incident(state.service)
+
+      :unknown ->
+        :ok
+    end
+
+    {:noreply, state}
   end
 
   @impl true
@@ -212,7 +234,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     if next_status == state.status do
       state
     else
-      transition(state, next_status)
+      transition(state, next_status, result)
     end
   end
 
@@ -245,10 +267,18 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     end
   end
 
-  defp transition(state, next_status) do
+  defp transition(state, next_status, result) do
     Logger.info("service #{state.service.id} #{state.status} -> #{next_status}")
 
     service = Monitoring.update_service_status(state.service, next_status)
+
+    # Every status change passes through here, which makes it the one place the
+    # incident lifecycle has to hook into.
+    case {state.status, next_status} do
+      {_previous, :down} -> Incidents.open_incident(service, result.error)
+      {:down, _recovered} -> Incidents.resolve_open_incident(service)
+      {_previous, _next} -> :ok
+    end
 
     %{state | service: service, status: next_status}
   end

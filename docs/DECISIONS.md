@@ -74,6 +74,27 @@ clustering safe without revisiting this code.
 
 ---
 
+## ADR-008 — Monitors reconcile incidents at startup, not only on transitions
+
+**Decision.** Incidents are opened and closed on a status *transition*, but a
+monitor also reconciles once in `handle_continue/2` when it starts: a service
+recorded as down gets an open incident, a service recorded as healthy has any
+stale open incident closed.
+
+**Why.** Transitions alone leave a hole across restarts. A monitor for a service
+already stored as `:down` starts in `:down`, never transitions, and so never
+fires the hook — the outage would exist with no incident attached to it. This was
+not hypothetical: it showed up the first time the application was restarted with
+a service already down, and no incident appeared. The invariant worth holding is
+"a down service has an open incident", and it has to survive restarts and crashes,
+which is exactly what supervision is supposed to give.
+
+**Rejected.** Calling `open_incident/2` after every check while down. It is
+idempotent thanks to ADR-004, but it means an insert that fails on the constraint
+on every single probe, for as long as the outage lasts.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the
