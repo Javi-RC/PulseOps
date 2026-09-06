@@ -5,6 +5,7 @@ defmodule PulseOps.MonitoringTest do
   import PulseOps.OrganizationsFixtures
 
   alias PulseOps.Monitoring
+  alias PulseOps.Monitoring.HealthCheck.Result
   alias PulseOps.Monitoring.Service
 
   @invalid_attrs %{
@@ -266,6 +267,113 @@ defmodule PulseOps.MonitoringTest do
       refute_receive {:created, _service}
     end
   end
+
+  describe "service_metrics/3" do
+    test "reports nothing for a service with no checks" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      assert %{total: 0, uptime_percent: nil, p50: nil, p95: nil, p99: nil} =
+               Monitoring.service_metrics(scope, service)
+    end
+
+    test "computes uptime from the recorded checks" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      record(service, :healthy, 100)
+      record(service, :healthy, 100)
+      record(service, :degraded, 100)
+      record(service, :down, nil)
+
+      metrics = Monitoring.service_metrics(scope, service)
+
+      assert metrics.total == 4
+      # Degraded still counts as up: the service answered.
+      assert metrics.up == 3
+      assert metrics.down == 1
+      assert_in_delta metrics.uptime_percent, 75.0, 0.001
+    end
+
+    test "computes percentiles in the database" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      for ms <- 1..100, do: record(service, :healthy, ms)
+
+      metrics = Monitoring.service_metrics(scope, service)
+
+      assert_in_delta metrics.p50, 50, 2
+      assert_in_delta metrics.p95, 95, 2
+      assert_in_delta metrics.p99, 99, 2
+    end
+
+    test "ignores checks outside the window" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      record(service, :healthy, 100)
+
+      assert Monitoring.service_metrics(scope, service, since: minutes_from_now(5)).total == 0
+    end
+
+    test "raises for a service in another organization" do
+      scope = organization_scope_fixture()
+      other_scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      assert_raise MatchError, fn -> Monitoring.service_metrics(other_scope, service) end
+    end
+  end
+
+  describe "uptime_by_service/2" do
+    test "returns one entry per service, scoped to the organization" do
+      scope = organization_scope_fixture()
+      good = service_fixture(scope, %{name: "Good"})
+      bad = service_fixture(scope, %{name: "Bad"})
+
+      other_scope = organization_scope_fixture()
+      theirs = service_fixture(other_scope)
+      record(theirs, :healthy, 10)
+
+      record(good, :healthy, 10)
+      record(good, :healthy, 10)
+      record(bad, :healthy, 10)
+      record(bad, :down, nil)
+
+      uptime = Monitoring.uptime_by_service(scope)
+
+      assert_in_delta uptime[good.id], 100.0, 0.001
+      assert_in_delta uptime[bad.id], 50.0, 0.001
+      refute Map.has_key?(uptime, theirs.id)
+    end
+  end
+
+  describe "list_checks_for_chart/3" do
+    test "returns checks oldest first, so a plot reads left to right" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      record(service, :healthy, 10)
+      record(service, :healthy, 20)
+      record(service, :healthy, 30)
+
+      assert [10, 20, 30] =
+               scope
+               |> Monitoring.list_checks_for_chart(service)
+               |> Enum.map(& &1.response_time_ms)
+    end
+  end
+
+  defp record(service, status, response_time_ms) do
+    Monitoring.record_check(service, status, %Result{
+      http_status: if(status == :down, do: nil, else: 200),
+      response_time_ms: response_time_ms,
+      error: if(status == :down, do: "connection refused")
+    })
+  end
+
+  defp minutes_from_now(minutes), do: DateTime.add(DateTime.utc_now(), minutes * 60, :second)
 
   describe "change_service/3" do
     test "returns a changeset" do

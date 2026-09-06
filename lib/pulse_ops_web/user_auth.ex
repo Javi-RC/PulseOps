@@ -297,12 +297,24 @@ defmodule PulseOpsWeb.UserAuth do
   end
 
   @doc "Returns the path to redirect to after log in."
-  # the user was already logged in, redirect to settings
-  def signed_in_path(%Plug.Conn{assigns: %{current_scope: %Scope{user: %Accounts.User{}}}}) do
-    ~p"/users/settings"
+  def signed_in_path(%Plug.Conn{assigns: %{current_scope: %Scope{user: %Accounts.User{} = user}}}) do
+    organization_path(user)
   end
 
   def signed_in_path(_), do: ~p"/"
+
+  @doc """
+  The dashboard of the user's first organization.
+
+  Every user has at least one, created at registration, so this normally
+  resolves; settings is the fallback for the case where it somehow does not.
+  """
+  def organization_path(%Accounts.User{} = user) do
+    case Organizations.list_organizations_for_user(user) do
+      [organization | _rest] -> ~p"/orgs/#{organization.slug}"
+      [] -> ~p"/users/settings"
+    end
+  end
 
   @doc """
   Plug for routes that require the user to be authenticated.

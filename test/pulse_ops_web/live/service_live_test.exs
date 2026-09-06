@@ -2,8 +2,11 @@ defmodule PulseOpsWeb.ServiceLiveTest do
   use PulseOpsWeb.ConnCase
 
   import Phoenix.LiveViewTest
+  import PulseOps.IncidentsFixtures
   import PulseOps.MonitoringFixtures
   import PulseOps.OrganizationsFixtures
+
+  alias PulseOps.Monitoring.HealthCheck.Result
 
   @create_attrs %{
     enabled: true,
@@ -115,6 +118,42 @@ defmodule PulseOpsWeb.ServiceLiveTest do
     end
   end
 
+  describe "Show with history" do
+    setup [:create_service]
+
+    test "renders the chart and the metrics once there are checks", %{
+      conn: conn,
+      service: service,
+      scope: scope
+    } do
+      # The page previously only ever got exercised with an empty history, which
+      # is why a crash in the plot geometry went unnoticed.
+      for ms <- [120, 340, 95, 780] do
+        PulseOps.Monitoring.record_check(service, :healthy, %Result{
+          http_status: 200,
+          response_time_ms: ms
+        })
+      end
+
+      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      assert html =~ "<polyline"
+      assert html =~ "780 ms"
+      assert html =~ "Uptime (24h)"
+      assert html =~ "100.00%"
+      assert html =~ "p95"
+    end
+
+    test "shows an open incident with a link to it", %{conn: conn, service: service, scope: scope} do
+      incident = incident_fixture(service)
+
+      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      assert html =~ "Open incident since"
+      assert html =~ "/incidents/#{incident.id}"
+    end
+  end
+
   describe "tenancy" do
     setup [:create_service]
 
@@ -153,8 +192,8 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       {:ok, _show_live, html} =
         live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
 
-      assert html =~ "Show Service"
       assert html =~ service.name
+      assert html =~ service.url
     end
 
     test "updates service and returns to show", %{conn: conn, service: service, scope: scope} do

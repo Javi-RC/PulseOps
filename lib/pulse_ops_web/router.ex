@@ -74,6 +74,9 @@ defmodule PulseOpsWeb.Router do
     # reach data belonging to that organization.
     live_session :require_organization,
       on_mount: [{PulseOpsWeb.UserAuth, :require_organization}] do
+      live "/orgs/:org", DashboardLive, :index
+      live "/orgs/:org/incidents", IncidentLive.Index, :index
+      live "/orgs/:org/incidents/:id", IncidentLive.Show, :show
       live "/orgs/:org/services", ServiceLive.Index, :index
       live "/orgs/:org/services/new", ServiceLive.Form, :new
       live "/orgs/:org/services/:id", ServiceLive.Show, :show

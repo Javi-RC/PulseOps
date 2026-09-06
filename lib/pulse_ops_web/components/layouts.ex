@@ -35,41 +35,70 @@ defmodule PulseOpsWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
+    <header class="navbar border-b border-base-300 px-4 sm:px-6 lg:px-8">
       <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
+        <a href={home_path(@current_scope)} class="flex w-fit items-center gap-2 font-semibold">
+          <img src={~p"/images/logo.svg"} width="28" alt="" /> PulseOps
         </a>
       </div>
       <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
+        <ul class="flex flex-column items-center space-x-2 px-1">
+          <%= if organization_scope?(@current_scope) do %>
+            <li>
+              <.link
+                navigate={~p"/orgs/#{@current_scope.organization.slug}"}
+                class="btn btn-ghost btn-sm"
+              >
+                Dashboard
+              </.link>
+            </li>
+            <li>
+              <.link
+                navigate={~p"/orgs/#{@current_scope.organization.slug}/services"}
+                class="btn btn-ghost btn-sm"
+              >
+                Services
+              </.link>
+            </li>
+            <li>
+              <.link
+                navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents"}
+                class="btn btn-ghost btn-sm"
+              >
+                Incidents
+              </.link>
+            </li>
+          <% end %>
           <li>
             <.theme_toggle />
           </li>
-          <li>
-            <a href="https://phoenix.hexdocs.pm/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
+          <li :if={@current_scope && @current_scope.user}>
+            <.link navigate={~p"/users/settings"} class="btn btn-ghost btn-sm">Settings</.link>
           </li>
         </ul>
       </div>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+    <main class="px-4 py-10 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-5xl space-y-4">
         {render_slot(@inner_block)}
       </div>
     </main>
 
     <.flash_group flash={@flash} />
     """
+  end
+
+  # Defined after app/1 on purpose: attr and slot declarations attach to the
+  # next function definition, so a private helper in between would steal them.
+  #
+  # The tenant nav only exists once a scope has been narrowed to an
+  # organization; the auth pages render this layout without one.
+  defp organization_scope?(%{organization: %{slug: slug}}) when is_binary(slug), do: true
+  defp organization_scope?(_scope), do: false
+
+  defp home_path(scope) do
+    if organization_scope?(scope), do: ~p"/orgs/#{scope.organization.slug}", else: ~p"/"
   end
 
   @doc """

@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 4 complete — Incidents |
-| Next | Phase 5 — Real-time dashboard |
-| Checks | `mix check` green: 221 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | 5 complete — Real-time dashboard. **The MVP is feature-complete.** |
+| Next | Phase 6 — CI, then tag v0.1.0 |
+| Checks | `mix check` green: 273 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
@@ -133,21 +133,35 @@ critical incident carrying the real failure reason ("unexpected HTTP status 503"
 and healing it resolved the incident automatically after 42 s with both timeline
 entries recorded and no author.
 
+### Phase 5 — Real-time dashboard
+
+- `DashboardLive` at `/orgs/:org`, `IncidentLive.Index`/`Show`, and a rebuilt
+  `ServiceLive.Show` with the latency chart and the uptime/percentile figures.
+- **No polling anywhere.** Every page subscribes on connect and re-reads on a
+  broadcast. Only the service detail page subscribes to `service:{id}:checks`.
+- Uptime and p50/p95/p99 are aggregated in SQL (`percentile_cont`,
+  `count(*) FILTER`). `uptime_by_service/2` is one query for the whole dashboard
+  rather than one per service.
+- Anything not healthy sorts to the top of the dashboard: the reason to open the
+  page is to find what is broken.
+- Chart follows the `dataviz` skill: one series so no legend, reserved status
+  palette, solid hairline grid, direct labels only on the latest and worst
+  readings, a hover column per point, and a `<table>` twin so no value is
+  hover-only. Both themes are declared explicitly.
+- Icons are [Lucide](https://lucide.dev), installed like heroicons — a `lucide`
+  git dep plus a Tailwind plugin in `assets/vendor/lucide.js`, exposed as
+  `lucide-<name>` and usable through the existing `<.icon>` component. Each
+  status has its own icon, so a badge still reads in greyscale.
+- `/` and the post-login redirect now send a logged-in user to their dashboard.
+
 ## Next steps
 
-Phase 5 — Real-time dashboard. Read the `dataviz` skill **before** writing the
-response-time chart, not after.
+Phase 6 — CI and release:
 
-1. `DashboardLive` at `/orgs/:org` — services with status, uptime and the active
-   incidents. Subscribe to `organization:{id}:services` and
-   `organization:{id}:incidents` in `mount/3` when `connected?`; use `stream/3`.
-2. `ServiceLive.Show` — check history, response-time chart, p50/p95/p99, uptime.
-   Subscribe to `service:{id}:checks` here and only here.
-3. `IncidentLive.Show` — timeline, workflow status, cause, resolve.
-4. Shared components: `status_badge`, `uptime_bar`, `severity_tag`, `relative_time`.
-5. Uptime and percentiles must be aggregated in SQL, not by loading every check.
-6. **No polling anywhere.** The one acceptable timer is a tick that refreshes
-   "3 min ago" labels without querying.
+1. `.github/workflows/ci.yml`: `postgres:17` service, cached `deps`/`_build`/PLT,
+   steps format → credo → test → dialyzer.
+2. Flesh out `README.md` with the supervision-tree diagram and a demo GIF.
+3. Run the AI-trace audit from the checklist below, then tag `v0.1.0` on `main`.
 
 ## Traps already hit
 
@@ -179,6 +193,13 @@ response-time chart, not after.
   it with a `GenServer.call` to synchronise before asserting on status.
 - `/dev/flaky/break` must not sit on the `:browser` pipeline: CSRF protection
   rejects the POST with a 403.
+- **`attr` and `slot` declarations attach to the next function definition.** A
+  private helper defined between them and `def app/1` silently stole the attrs
+  and every page using the layout crashed with `BadMapError`.
+- `Float.round/2` rejects integers. Plot coordinates land on whole numbers often
+  enough that the chart crashed on any real data; `round2/1` coerces first. The
+  LiveView tests missed it because none of them rendered a service that had
+  checks — there is now one that does.
 
 ## Open questions
 
