@@ -239,4 +239,86 @@ defmodule PulseOps.Monitoring do
         limit: ^limit
     )
   end
+
+  @doc """
+  The most recent checks in chronological order, for plotting.
+  """
+  def list_checks_for_chart(%Scope{} = scope, %Service{} = service, limit \\ 60) do
+    scope
+    |> list_recent_checks(service, limit)
+    |> Enum.reverse()
+  end
+
+  @doc """
+  Availability and latency for a service over a window, aggregated in the
+  database.
+
+  Loading every check into the VM to compute a percentile would stop working at
+  exactly the point the numbers start being interesting.
+  """
+  def service_metrics(%Scope{} = scope, %Service{} = service, opts \\ []) do
+    true = service.organization_id == scope.organization.id
+
+    since = Keyword.get_lazy(opts, :since, fn -> hours_ago(24) end)
+
+    query =
+      from c in Check,
+        where: c.service_id == ^service.id and c.inserted_at >= ^since,
+        select: %{
+          total: count(c.id),
+          up: fragment("count(*) FILTER (WHERE ? <> 'down')", c.status),
+          down: fragment("count(*) FILTER (WHERE ? = 'down')", c.status),
+          p50: fragment("percentile_cont(0.5) WITHIN GROUP (ORDER BY ?)", c.response_time_ms),
+          p95: fragment("percentile_cont(0.95) WITHIN GROUP (ORDER BY ?)", c.response_time_ms),
+          p99: fragment("percentile_cont(0.99) WITHIN GROUP (ORDER BY ?)", c.response_time_ms)
+        }
+
+    query |> Repo.one() |> to_metrics()
+  end
+
+  @doc """
+  Availability for every service in the organization over a window, as a map of
+  service id to uptime percentage.
+
+  One query rather than one per service, so the dashboard does not fan out.
+  """
+  def uptime_by_service(%Scope{} = scope, opts \\ []) do
+    since = Keyword.get_lazy(opts, :since, fn -> hours_ago(24) end)
+
+    from(c in Check,
+      join: s in Service,
+      on: s.id == c.service_id,
+      where: s.organization_id == ^scope.organization.id and c.inserted_at >= ^since,
+      group_by: c.service_id,
+      select:
+        {c.service_id,
+         fragment("count(*) FILTER (WHERE ? <> 'down')::float / count(*)::float", c.status)}
+    )
+    |> Repo.all()
+    |> Map.new(fn {service_id, ratio} -> {service_id, ratio * 100} end)
+  end
+
+  defp to_metrics(nil), do: empty_metrics()
+  defp to_metrics(%{total: 0}), do: empty_metrics()
+
+  defp to_metrics(row) do
+    %{
+      total: row.total,
+      up: row.up,
+      down: row.down,
+      uptime_percent: row.up / row.total * 100,
+      p50: round_ms(row.p50),
+      p95: round_ms(row.p95),
+      p99: round_ms(row.p99)
+    }
+  end
+
+  defp empty_metrics do
+    %{total: 0, up: 0, down: 0, uptime_percent: nil, p50: nil, p95: nil, p99: nil}
+  end
+
+  defp round_ms(nil), do: nil
+  defp round_ms(value), do: round(value)
+
+  defp hours_ago(hours), do: DateTime.add(DateTime.utc_now(), -hours * 3600, :second)
 end

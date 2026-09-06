@@ -13,6 +13,10 @@
    The heroicons installation itself is managed by your mix.exs */
 @plugin "../vendor/heroicons";
 
+/* Lucide icon set, installed by the `lucide` dependency in mix.exs.
+   Used as `lucide-<name>`, e.g. `lucide-activity`. */
+@plugin "../vendor/lucide";
+
 /* daisyUI Tailwind Plugin. */
 @plugin "daisyui/packages/bundle/daisyui" {
   themes: false;

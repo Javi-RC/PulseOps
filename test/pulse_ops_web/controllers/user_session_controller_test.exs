@@ -20,8 +20,10 @@ defmodule PulseOpsWeb.UserSessionControllerTest do
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
 
-      # Now do a logged in request and assert on the menu
+      # Now do a logged in request and assert on the menu. "/" sends a logged-in
+      # user on to their organization dashboard rather than the landing page.
       conn = get(conn, ~p"/")
+      conn = get(conn, redirected_to(conn))
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
@@ -84,8 +86,10 @@ defmodule PulseOpsWeb.UserSessionControllerTest do
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
 
-      # Now do a logged in request and assert on the menu
+      # Now do a logged in request and assert on the menu. "/" sends a logged-in
+      # user on to their organization dashboard rather than the landing page.
       conn = get(conn, ~p"/")
+      conn = get(conn, redirected_to(conn))
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
@@ -108,8 +112,10 @@ defmodule PulseOpsWeb.UserSessionControllerTest do
 
       assert Accounts.get_user!(user.id).confirmed_at
 
-      # Now do a logged in request and assert on the menu
+      # Now do a logged in request and assert on the menu. "/" sends a logged-in
+      # user on to their organization dashboard rather than the landing page.
       conn = get(conn, ~p"/")
+      conn = get(conn, redirected_to(conn))
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
