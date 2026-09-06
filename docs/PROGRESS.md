@@ -8,8 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 0 complete — Bootstrap and Docker environment |
-| Next | Phase 1 — Authentication and multi-tenancy |
+| Phase | 1 complete — Authentication and multi-tenancy |
+| Next | Phase 2 — Services CRUD, scoped to the organization |
+| Tests | 136 passing, Credo `--strict` clean |
 
 ## Commands
 
@@ -43,17 +44,41 @@ Docker Desktop must be running. On Windows it is at
   ADR-005, this must stay.
 - Verified: `http://localhost:4000` returns 200.
 
+### Phase 1 — Authentication and multi-tenancy
+
+- `mix phx.gen.auth Accounts User users --live` — LiveView registration, login,
+  settings and confirmation, plus `PulseOps.Accounts.Scope`.
+- `PulseOps.Organizations`: `Organization` (name + unique slug, slug derived from
+  the name) and `Membership` (`owner`/`admin`/`member`/`viewer`).
+- `Accounts.register_user/1` now runs an `Ecto.Multi` that also creates the user's
+  personal organization and their owner membership — a new user is never stranded
+  without a tenant.
+- `Scope` extended with `organization` and `role`; `Scope.put_organization/3`.
+- `config :pulse_ops, :scopes` has the `organization` entry with
+  `route_prefix: "/orgs/:org"` — required *before* any `--scope organization`
+  generator runs (ADR-001).
+- `on_mount :require_organization` in `PulseOpsWeb.UserAuth` resolves the slug,
+  verifies membership, and narrows the scope. Non-members and unknown slugs get
+  the same response, so the route cannot enumerate organizations.
+- Authorization in `Organizations.can?/2` and `authorize/2`, in the context.
+- Test helper `register_and_log_in_user_with_org` and `PulseOps.OrganizationsFixtures`.
+- Tidied Credo `--strict` findings in the Phoenix-generated files so the linter is
+  green from the start.
+
 ## Next steps
 
-Phase 1, in order — the order matters, see ADR-001:
+Phase 2 — Services CRUD:
 
-1. `mix phx.gen.auth Accounts User users`.
-2. `Organizations` context: `organizations`, `organization_members` with roles
-   (`owner`/`admin`/`member`/`viewer`), personal org created on registration.
-3. Extend `PulseOps.Accounts.Scope` with `organization` and `role`.
-4. Add the `organization` entry to `config :pulse_ops, :scopes` in `config/config.exs`
-   **before** generating any org-scoped resource.
-5. `on_mount :require_organization` in `PulseOpsWeb.UserAuth`.
+1. `mix phx.gen.live Monitoring Service services name:string description:text
+   environment:string url:string check_interval_ms:integer timeout_ms:integer
+   enabled:boolean status:string last_checked_at:utc_datetime --scope organization`
+2. Turn `environment` and `status` into `Ecto.Enum`; validate the URL scheme and
+   that `timeout_ms < check_interval_ms`; unique index on `(organization_id, name)`.
+3. Enforce `:manage_services` in the context for writes, not just in the UI.
+4. Add the `/orgs/:org` route scope with `on_mount :require_organization` — nothing
+   uses that hook yet, so Phase 2 is where it first runs for real.
+5. Leave a hook in create/update/delete to start, restart and stop monitors; it gets
+   connected in Phase 3.
 
 ## Traps already hit
 
@@ -62,6 +87,13 @@ Phase 1, in order — the order matters, see ADR-001:
 - `phx.new` generates an `AGENTS.md`; it is gitignored on purpose (see ADR-006).
 - `_build` and `deps` are named volumes shadowing the bind mount. Anything that
   needs to be visible on the host must not live there.
+- **Never set `MIX_ENV` in `Dockerfile.dev`.** An explicit value overrides the env
+  `mix test` picks for itself, so the suite silently ran against dev config and
+  failed with "cannot invoke sandbox operation with pool DBConnection.ConnectionPool".
+- Elixir 1.20 warns about files under `test/support` not matching the test filters;
+  `test_ignore_filters` in `mix.exs` handles it.
+- `user_fixture/0` now creates a personal organization as a side effect of
+  registration. Tests that count a user's organizations must account for it.
 
 ## Open questions
 

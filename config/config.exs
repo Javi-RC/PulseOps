@@ -7,6 +7,34 @@
 # General application configuration
 import Config
 
+config :pulse_ops, :scopes,
+  user: [
+    default: true,
+    module: PulseOps.Accounts.Scope,
+    assign_key: :current_scope,
+    access_path: [:user, :id],
+    schema_key: :user_id,
+    schema_type: :id,
+    schema_table: :users,
+    test_data_fixture: PulseOps.AccountsFixtures,
+    test_setup_helper: :register_and_log_in_user
+  ],
+  # Tenant scope. Generators reading this entry give every scoped resource an
+  # organization_id and nest its routes under /orgs/:org. It has to exist before
+  # running any `mix phx.gen.* --scope organization`.
+  organization: [
+    module: PulseOps.Accounts.Scope,
+    assign_key: :current_scope,
+    access_path: [:organization, :id],
+    route_prefix: "/orgs/:org",
+    route_access_path: [:organization, :slug],
+    schema_key: :organization_id,
+    schema_type: :id,
+    schema_table: :organizations,
+    test_data_fixture: PulseOps.OrganizationsFixtures,
+    test_setup_helper: :register_and_log_in_user_with_org
+  ]
+
 config :pulse_ops,
   ecto_repos: [PulseOps.Repo],
   generators: [timestamp_type: :utc_datetime]
