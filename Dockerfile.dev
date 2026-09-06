@@ -1,0 +1,22 @@
+FROM elixir:1.20-otp-28
+
+# inotify-tools powers Phoenix live reload; the rest is needed to compile
+# native dependencies and to fetch git-sourced deps (heroicons, daisyui).
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        inotify-tools \
+        postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mix local.hex --force && mix local.rebar --force
+
+ENV MIX_ENV=dev \
+    LANG=C.UTF-8
+
+WORKDIR /app
+
+EXPOSE 4000
+
+CMD ["mix", "phx.server"]

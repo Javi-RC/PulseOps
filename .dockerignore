@@ -1,0 +1,14 @@
+.git
+.gitignore
+_build
+deps
+cover
+doc
+tmp
+priv/static/assets
+priv/static/cache_manifest.json
+assets/node_modules
+erl_crash.dump
+*.ez
+docs
+README.md

@@ -1,0 +1,8 @@
+# The toolchain runs on Linux inside containers; keep LF in the repository
+# regardless of the checkout platform.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
