@@ -256,7 +256,9 @@ index (ADR-004) is already what makes the clustering step safe.
   rendered at 24px no matter what size utility was on the element — larger than
   its container and clipped. Heroicons ship without those attributes, which is
   why they never showed it. `assets/vendor/lucide.js` now strips them and sets
-  `mask-size: 100% 100%`.
+  `mask-size: 100% 100%` — but **only from the opening `<svg>` tag**. Many Lucide
+  icons are drawn out of `<rect>` elements (`layout-dashboard` and `server` are
+  nothing else), and stripping width/height from those collapses the shapes.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
