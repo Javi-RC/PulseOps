@@ -10,9 +10,11 @@ defmodule PulseOpsWeb.DashboardLive do
   use PulseOpsWeb, :live_view
 
   import PulseOpsWeb.MonitoringComponents
+  import PulseOpsWeb.UIComponents
 
   alias PulseOps.Incidents
   alias PulseOps.Monitoring
+  alias PulseOps.Organizations
 
   @impl true
   def mount(_params, _session, socket) do
@@ -26,6 +28,9 @@ defmodule PulseOpsWeb.DashboardLive do
     {:ok,
      socket
      |> assign(:page_title, "Dashboard")
+     |> assign(:now, DateTime.utc_now())
+     |> schedule_tick()
+     |> assign(:can_manage?, Organizations.can?(scope, :manage_services))
      |> load_dashboard()}
   end
 
@@ -45,20 +50,33 @@ defmodule PulseOpsWeb.DashboardLive do
     {:noreply, load_dashboard(socket)}
   end
 
+  def handle_info(:tick, socket) do
+    {:noreply, socket |> assign(:now, DateTime.utc_now()) |> schedule_tick()}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
+  # The only timer on these pages, and it touches nothing but the clock: without
+  # it a "3 min ago" label sits frozen until the next broadcast happens to
+  # arrive. It issues no queries, so it is not polling.
+  @tick_ms 30_000
+
+  defp schedule_tick(socket) do
+    if connected?(socket), do: Process.send_after(self(), :tick, @tick_ms)
+    socket
+  end
 
   defp load_dashboard(socket) do
     scope = socket.assigns.current_scope
 
     services = Monitoring.list_services(scope)
-    uptime = Monitoring.uptime_by_service(scope)
-    incidents = Incidents.list_active_incidents(scope)
 
     socket
     |> assign(:services, Enum.sort_by(services, &{status_rank(&1.status), &1.name}))
-    |> assign(:uptime, uptime)
-    |> assign(:incidents, incidents)
+    |> assign(:uptime, Monitoring.uptime_by_service(scope))
+    |> assign(:history, Monitoring.recent_checks_by_service(scope))
+    |> assign(:incidents, Incidents.list_active_incidents(scope))
     |> assign(:overall, overall_status(services))
+    |> assign(:counts, Enum.frequencies_by(services, & &1.status))
   end
 
   # Anything wrong floats to the top of the list: the reason to open this page is
@@ -85,93 +103,116 @@ defmodule PulseOpsWeb.DashboardLive do
       organizations={@organizations}
       current_path={@current_path}
     >
-      <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 class="text-2xl font-semibold">{@current_scope.organization.name}</h1>
-          <p class="mt-1 text-sm text-base-content/60">
-            Live status · updates arrive over the socket, nothing is polled
-          </p>
-        </div>
-        <.status_badge status={@overall} class="text-lg" />
+      <.page_header title={@current_scope.organization.name}>
+        <:subtitle>
+          Live status. Updates arrive over the socket — nothing on this page polls.
+        </:subtitle>
+        <:actions>
+          <.status_badge status={@overall} class="rounded-full border border-base-300 px-3 py-1.5" />
+        </:actions>
+      </.page_header>
+
+      <div :if={@services != []} class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <.stat_tile label="Services" value={to_string(length(@services))} />
+        <.stat_tile
+          label="Healthy"
+          value={to_string(Map.get(@counts, :healthy, 0))}
+          hint={"of #{length(@services)}"}
+        />
+        <.stat_tile label="Degraded" value={to_string(Map.get(@counts, :degraded, 0))} />
+        <.stat_tile label="Down" value={to_string(Map.get(@counts, :down, 0))} />
       </div>
 
       <section class="mb-8">
         <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-lg font-medium">Services</h2>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/60">
+            Services
+          </h2>
           <.link
             navigate={~p"/orgs/#{@current_scope.organization.slug}/services"}
-            class="link text-sm"
+            class="text-sm text-base-content/60 hover:underline"
           >
-            Manage services
+            Manage
           </.link>
         </div>
 
-        <div
+        <.empty_state
           :if={@services == []}
-          class="rounded-lg border border-dashed border-base-300 p-8 text-center"
+          icon="lucide-server"
+          title="Nothing is being watched yet"
         >
-          <p class="text-base-content/60">No services yet.</p>
+          <:subtitle>
+            Register an endpoint and PulseOps starts probing it from its own supervised process.
+          </:subtitle>
+          <:actions>
+            <.link
+              :if={@can_manage?}
+              navigate={~p"/orgs/#{@current_scope.organization.slug}/services/new"}
+              class="btn btn-primary btn-sm"
+            >
+              Add the first service
+            </.link>
+          </:actions>
+        </.empty_state>
+
+        <div :if={@services != []} class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <.link
-            navigate={~p"/orgs/#{@current_scope.organization.slug}/services/new"}
-            class="btn btn-primary btn-sm mt-4"
+            :for={service <- @services}
+            navigate={~p"/orgs/#{@current_scope.organization.slug}/services/#{service}"}
+            id={"service-#{service.id}"}
+            class="rounded-box border border-base-300 bg-base-100 p-4 transition-shadow hover:shadow-md"
           >
-            Add the first one
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <div class="truncate font-medium">{service.name}</div>
+                <div class="text-xs text-base-content/50">{service.environment}</div>
+              </div>
+              <.status_badge status={service.status} />
+            </div>
+
+            <div class="mt-3">
+              <.uptime_bar checks={Map.get(@history, service.id, [])} />
+            </div>
+
+            <div class="mt-3 flex items-center justify-between text-xs text-base-content/50">
+              <span class="tabular-nums">{format_percent(@uptime[service.id])} · 24h</span>
+              <.relative_time now={@now} at={service.last_checked_at} />
+            </div>
           </.link>
         </div>
-
-        <ul :if={@services != []} class="divide-y divide-base-300 rounded-lg border border-base-300">
-          <li :for={service <- @services} class="flex flex-wrap items-center gap-4 px-4 py-3">
-            <div class="min-w-0 flex-1">
-              <.link
-                navigate={~p"/orgs/#{@current_scope.organization.slug}/services/#{service}"}
-                class="font-medium hover:underline"
-              >
-                {service.name}
-              </.link>
-              <div class="text-xs text-base-content/50">
-                {service.environment} · checked <.relative_time at={service.last_checked_at} />
-              </div>
-            </div>
-
-            <div class="w-24 text-right text-sm tabular-nums text-base-content/70">
-              {format_percent(@uptime[service.id])}
-            </div>
-
-            <.status_badge status={service.status} class="w-28" />
-          </li>
-        </ul>
       </section>
 
       <section>
-        <h2 class="mb-3 text-lg font-medium">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
           Active incidents
-          <span :if={@incidents != []} class="ml-1 text-base-content/50">({length(@incidents)})</span>
+          <span :if={@incidents != []} class="ml-1 normal-case text-base-content/40">
+            ({length(@incidents)})
+          </span>
         </h2>
 
-        <p
-          :if={@incidents == []}
-          class="rounded-lg border border-base-300 p-6 text-center text-sm text-base-content/60"
-        >
-          Nothing is on fire.
-        </p>
+        <.empty_state :if={@incidents == []} icon="lucide-circle-check" title="Nothing is on fire">
+          <:subtitle>Incidents open automatically when a service stops answering.</:subtitle>
+        </.empty_state>
 
-        <ul :if={@incidents != []} class="divide-y divide-base-300 rounded-lg border border-base-300">
-          <li :for={incident <- @incidents} class="flex flex-wrap items-center gap-4 px-4 py-3">
-            <.severity_tag severity={incident.severity} />
-            <div class="min-w-0 flex-1">
-              <.link
-                navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents/#{incident}"}
-                class="font-medium hover:underline"
-              >
-                {incident.title}
-              </.link>
-              <div class="text-xs text-base-content/50">
-                Started <.relative_time at={incident.started_at} />
-                · {incident_status_label(incident.status)}
+        <.card :if={@incidents != []} padded={false}>
+          <ul class="divide-y divide-base-300">
+            <li :for={incident <- @incidents} class="flex flex-wrap items-center gap-3 px-4 py-3">
+              <.severity_tag severity={incident.severity} />
+              <div class="min-w-0 flex-1">
+                <.link
+                  navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents/#{incident}"}
+                  class="font-medium hover:underline"
+                >
+                  {incident.title}
+                </.link>
+                <div class="text-xs text-base-content/50">
+                  Started <.relative_time now={@now} at={incident.started_at} />
+                  · {incident_status_label(incident.status)}
+                </div>
               </div>
-            </div>
-          </li>
-        </ul>
+            </li>
+          </ul>
+        </.card>
       </section>
     </Layouts.app>
     """

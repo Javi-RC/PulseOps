@@ -22,6 +22,8 @@ defmodule PulseOpsWeb.ServiceLive.Index do
     {:ok,
      socket
      |> assign(:page_title, "Services")
+     |> assign(:now, DateTime.utc_now())
+     |> schedule_tick()
      |> assign(:environment_filter, :all)
      |> assign(:status_filter, :all)
      |> assign(:can_manage?, Organizations.can?(scope, :manage_services))
@@ -33,7 +35,20 @@ defmodule PulseOpsWeb.ServiceLive.Index do
     {:noreply, load_services(socket)}
   end
 
+  def handle_info(:tick, socket) do
+    {:noreply, socket |> assign(:now, DateTime.utc_now()) |> schedule_tick()}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
+  # The only timer on these pages, and it touches nothing but the clock: without
+  # it a "3 min ago" label sits frozen until the next broadcast happens to
+  # arrive. It issues no queries, so it is not polling.
+  @tick_ms 30_000
+
+  defp schedule_tick(socket) do
+    if connected?(socket), do: Process.send_after(self(), :tick, @tick_ms)
+    socket
+  end
 
   @impl true
   def handle_event("filter", %{"key" => "environment", "value" => value}, socket) do
@@ -77,8 +92,10 @@ defmodule PulseOpsWeb.ServiceLive.Index do
 
     visible =
       services
-      |> Enum.filter(&(environment == :all or &1.environment == environment))
-      |> Enum.filter(&(status == :all or &1.status == status))
+      |> Enum.filter(fn service ->
+        (environment == :all or service.environment == environment) and
+          (status == :all or service.status == status)
+      end)
       |> Enum.sort_by(&{status_rank(&1.status), &1.name})
 
     assign(socket, :visible_services, visible)
@@ -202,7 +219,7 @@ defmodule PulseOpsWeb.ServiceLive.Index do
             </div>
 
             <div class="hidden w-28 shrink-0 text-right text-xs text-base-content/50 sm:block">
-              <.relative_time at={service.last_checked_at} />
+              <.relative_time now={@now} at={service.last_checked_at} />
             </div>
 
             <div :if={@can_manage?} class="flex shrink-0 items-center gap-1">

@@ -233,6 +233,23 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       assert html =~ "p95"
     end
 
+    test "keeps the demo controls out of anything but development", %{
+      conn: conn,
+      service: service,
+      scope: scope
+    } do
+      {:ok, updated} =
+        Monitoring.update_service(scope, service, %{url: "http://localhost:4000/dev/flaky"})
+
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{updated}")
+
+      # dev_routes is off outside development, so the buttons must not appear
+      # even for the service they would act on.
+      refute html =~ "Demo controls"
+      refute html =~ "break_demo_service"
+    end
+
     test "shows an open incident with a link to it", %{conn: conn, service: service, scope: scope} do
       incident = incident_fixture(service)
 

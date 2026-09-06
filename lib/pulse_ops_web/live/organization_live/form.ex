@@ -52,7 +52,13 @@ defmodule PulseOpsWeb.OrganizationLive.Form do
           </:subtitle>
         </.page_header>
 
-        <.form for={@form} phx-change="validate" phx-submit="save" class="space-y-4">
+        <.form
+          for={@form}
+          id="organization-form"
+          phx-change="validate"
+          phx-submit="save"
+          class="space-y-4"
+        >
           <.input field={@form[:name]} type="text" label="Name" placeholder="Acme Corp" required />
           <.input
             field={@form[:slug]}
@@ -66,7 +72,7 @@ defmodule PulseOpsWeb.OrganizationLive.Form do
 
           <div class="flex gap-2 pt-2">
             <.button variant="primary" phx-disable-with="Creating...">Create organization</.button>
-            <.button navigate={~p"/"}>Cancel</.button>
+            <.link navigate={~p"/"} class="btn btn-soft">Cancel</.link>
           </div>
         </.form>
       </.card>

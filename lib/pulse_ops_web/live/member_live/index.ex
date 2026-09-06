@@ -163,7 +163,7 @@ defmodule PulseOpsWeb.MemberLive.Index do
             </div>
 
             <%= if @can_manage? do %>
-              <form phx-change="set_role" class="contents">
+              <form id={"role-form-#{member.id}"} phx-change="set_role" class="contents">
                 <input type="hidden" name="member_id" value={member.id} />
                 <select
                   name="role"

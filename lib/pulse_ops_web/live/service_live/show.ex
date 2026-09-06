@@ -10,6 +10,7 @@ defmodule PulseOpsWeb.ServiceLive.Show do
   use PulseOpsWeb, :live_view
 
   import PulseOpsWeb.MonitoringComponents
+  import PulseOpsWeb.UIComponents
 
   alias PulseOps.Incidents
   alias PulseOps.Monitoring
@@ -36,6 +37,7 @@ defmodule PulseOpsWeb.ServiceLive.Show do
        :can_manage?,
        Organizations.can?(socket.assigns.current_scope, :manage_services)
      )
+     |> assign(:demo_target?, demo_target?(service))
      |> load_history()}
   end
 
@@ -70,6 +72,26 @@ defmodule PulseOpsWeb.ServiceLive.Show do
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # The demo controls only exist in development, and only for the service that
+  # points at the endpoint whose behaviour can be changed. They call the agent
+  # directly: a LiveView event needs no HTTP round trip, and the browser
+  # pipeline's CSRF protection would reject a plain form post anyway.
+  @impl true
+  def handle_event("break_demo_service", _params, socket) do
+    if socket.assigns.demo_target?, do: PulseOpsWeb.Flaky.break()
+    {:noreply, put_flash(socket, :info, "The endpoint is now failing. Watch the status change.")}
+  end
+
+  def handle_event("heal_demo_service", _params, socket) do
+    if socket.assigns.demo_target?, do: PulseOpsWeb.Flaky.heal()
+    {:noreply, put_flash(socket, :info, "The endpoint is answering again.")}
+  end
+
+  defp demo_target?(service) do
+    Application.get_env(:pulse_ops, :dev_routes, false) and
+      String.contains?(service.url, "/dev/flaky")
+  end
 
   defp load_history(socket) do
     scope = socket.assigns.current_scope
@@ -138,6 +160,20 @@ defmodule PulseOpsWeb.ServiceLive.Show do
           Open incident
         </.link>
       </div>
+
+      <.card :if={@demo_target?} class="mb-6 border-dashed">
+        <div class="flex flex-wrap items-center gap-3">
+          <.icon name="lucide-flask-conical" class="size-5 text-base-content/40" />
+          <div class="min-w-0 flex-1 text-sm">
+            <span class="font-medium">Demo controls</span>
+            <span class="text-base-content/60">
+              — break this endpoint on purpose and watch an incident open by itself.
+            </span>
+          </div>
+          <button phx-click="break_demo_service" class="btn btn-sm">Break it</button>
+          <button phx-click="heal_demo_service" class="btn btn-sm">Fix it</button>
+        </div>
+      </.card>
 
       <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <.stat_tile

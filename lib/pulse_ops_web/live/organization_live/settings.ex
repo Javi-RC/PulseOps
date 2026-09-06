@@ -60,7 +60,13 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
       </.page_header>
 
       <.card class="max-w-xl">
-        <.form for={@form} phx-change="validate" phx-submit="save" class="space-y-4">
+        <.form
+          for={@form}
+          id="organization-form"
+          phx-change="validate"
+          phx-submit="save"
+          class="space-y-4"
+        >
           <.input field={@form[:name]} type="text" label="Name" required />
           <.input field={@form[:slug]} type="text" label="URL" required />
 

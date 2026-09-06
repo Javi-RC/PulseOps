@@ -11,6 +11,7 @@ defmodule PulseOpsWeb.ServiceLive.Form do
 
   import PulseOpsWeb.UIComponents
 
+  alias Phoenix.HTML.Form
   alias PulseOps.Monitoring
   alias PulseOps.Monitoring.Service
 
@@ -121,7 +122,7 @@ defmodule PulseOpsWeb.ServiceLive.Form do
   end
 
   defp seconds_value(form, field, default) do
-    case Phoenix.HTML.Form.input_value(form, field) do
+    case Form.input_value(form, field) do
       nil -> default
       "" -> default
       value when is_integer(value) -> div(value, 1000)
@@ -264,9 +265,9 @@ defmodule PulseOpsWeb.ServiceLive.Form do
               <.button variant="primary" phx-disable-with="Saving...">
                 Save service
               </.button>
-              <.button navigate={return_path(@current_scope, @return_to, @service)}>
+              <.link navigate={return_path(@current_scope, @return_to, @service)} class="btn btn-soft">
                 Cancel
-              </.button>
+              </.link>
             </div>
           </div>
         </div>
