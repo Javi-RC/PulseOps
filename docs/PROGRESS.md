@@ -251,6 +251,12 @@ index (ADR-004) is already what makes the clustering step safe.
   router, which is how the `on_mount` unit tests call it — guard on `socket.router`.
 - `deps/` and `_build/` are Docker named volumes: they do **not** exist on the
   host. Check anything in them from inside the container.
+- **`.gitignore` does not untrack what is already tracked.** 3.2 MB of Dialyzer
+  PLT binaries were committed before the ignore rule existed and stayed in the
+  repository until `git rm --cached` removed them.
+- CI runs in the project's own image (ADR-007). `erlef/setup-beam` installs an
+  OTP build missing `dialyzer`'s `erl_bif_types.beam`, which made Dialyzer fail
+  while every other step passed.
 - **A CSS mask does not scale to its box.** Lucide ships its SVGs with
   `width="24" height="24"`, which gives the mask an intrinsic size, so every icon
   rendered at 24px no matter what size utility was on the element — larger than
