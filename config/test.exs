@@ -1,5 +1,8 @@
 import Config
 
+# Only in tests, remove the complexity from the password hashing algorithm
+config :bcrypt_elixir, :log_rounds, 1
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
@@ -44,3 +47,7 @@ config :phoenix,
 # requests and check out database connections outside the Ecto sandbox. Tests
 # that need one start it explicitly and call Sandbox.allow/3 for it.
 config :pulse_ops, start_monitors: false
+
+# Probes go through a Mox mock, so tests can drive a service from healthy to
+# down and back without touching the network.
+config :pulse_ops, health_check_client: PulseOps.Monitoring.HealthCheckMock

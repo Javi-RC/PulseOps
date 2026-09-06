@@ -29,6 +29,7 @@ defmodule PulseOpsWeb.CoreComponents do
   use Phoenix.Component
   use Gettext, backend: PulseOpsWeb.Gettext
 
+  alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
   @doc """
@@ -208,7 +209,7 @@ defmodule PulseOpsWeb.CoreComponents do
   def input(%{type: "checkbox"} = assigns) do
     assigns =
       assign_new(assigns, :checked, fn ->
-        Phoenix.HTML.Form.normalize_value("checkbox", assigns[:value])
+        Form.normalize_value("checkbox", assigns[:value])
       end)
 
     ~H"""
@@ -442,11 +443,23 @@ defmodule PulseOpsWeb.CoreComponents do
 
       <.icon name="hero-x-mark" />
       <.icon name="hero-arrow-path" class="ml-1 size-3 motion-safe:animate-spin" />
+
+  [Lucide](https://lucide.dev) icons are available too, under the `lucide-`
+  prefix, extracted from `deps/lucide/icons` by `assets/vendor/lucide.js`:
+
+      <.icon name="lucide-activity" />
+      <.icon name="lucide-triangle-alert" class="size-5" />
   """
   attr :name, :string, required: true
   attr :class, :any, default: "size-4"
 
   def icon(%{name: "hero-" <> _} = assigns) do
+    ~H"""
+    <span class={[@name, @class]} />
+    """
+  end
+
+  def icon(%{name: "lucide-" <> _} = assigns) do
     ~H"""
     <span class={[@name, @class]} />
     """
