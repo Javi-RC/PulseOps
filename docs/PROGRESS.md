@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 7 complete — front end rebuilt, organization management shipped |
+| Phase | 8 complete — **released as `v0.2.0`** |
 | Next | V2 — Oban, alert rules, notifications, activity log, metric rollups |
-| Checks | `mix check` green: 329 tests, Credo `--strict` clean, Dialyzer clean |
+| Checks | `mix check` green: 330 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
