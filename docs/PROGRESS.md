@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 2 complete — Services CRUD |
-| Next | Phase 3 — Health checks with OTP |
-| Checks | `mix check` green: 169 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | 3 complete — Health checks with OTP |
+| Next | Phase 4 — Incidents and PubSub |
+| Checks | `mix check` green: 185 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
@@ -82,23 +82,41 @@ Docker Desktop must be running. On Windows it is at
 - Routes live under `live_session :require_organization` at `/orgs/:org/services`.
 - PubSub topic emitted by the generator is `organization:{id}:services`.
 
+### Phase 3 — Health checks with OTP
+
+- `PulseOps.Monitoring.Supervisor` in the app tree after Repo and PubSub:
+  Registry (`:unique`) → `Task.Supervisor` → `MonitorSupervisor` → `Bootstrapper`.
+- `ServiceMonitor` (`restart: :transient`), one per enabled service, registered
+  `{:via, Registry, {..., {:monitor, service_id}}}`. The probe runs under
+  `Task.Supervisor.async_nolink/2`, never inline (ADR-002). Jittered scheduling,
+  at most one probe in flight per service, and a backstop timeout in case a task
+  wedges past the service's own timeout.
+- Thresholds: 3 consecutive failures to go down, 2 successes to recover, and a
+  success slower than half the service timeout reports degraded.
+- `HealthCheck` behaviour + `HealthCheck.Req`; `config/test.exs` points at
+  `HealthCheckMock`, defined in `test_helper.exs`.
+- `service_checks` table; every probe is recorded, but only status *changes* are
+  broadcast to the organization topic.
+- Lifecycle wired into the context: create starts a monitor, update restarts it,
+  delete stops it.
+- `/dev/flaky` (dev only) with `POST /dev/flaky/break` and `/heal`, plus seeds
+  covering a controllable target, a real external one, and a permanently dead one.
+
+**Verified against the running app,** not just in tests: `Legacy Payments` went
+down after exactly 3 failed probes, and breaking the flaky endpoint drove
+`API Gateway` healthy → down → healthy on the real thresholds.
+
 ## Next steps
 
-Phase 3 — Health checks with OTP. The monitor lifecycle hooks are **not** in the
-context yet; `create_service/2`, `update_service/3` and `delete_service/2` in
-`lib/pulse_ops/monitoring.ex` are where the start/restart/stop calls go.
+Phase 4 — Incidents and PubSub:
 
-1. `PulseOps.Monitoring.Supervisor`: Registry (`:unique`), `Task.Supervisor`,
-   `MonitorSupervisor` (DynamicSupervisor), `Bootstrapper`. Add it to
-   `application.ex` after the Repo; the bootstrapper must honour
-   `Application.get_env(:pulse_ops, :start_monitors, true)` (ADR-005).
-2. `HealthCheck` behaviour + `HealthCheck.Req` implementation; point
-   `config/test.exs` at a Mox mock.
-3. `ServiceMonitor` GenServer — the HTTP request goes through
-   `Task.Supervisor.async_nolink/2`, never inline (ADR-002). Jittered
-   `Process.send_after/3`. Persist every check; broadcast only on status change.
-4. `service_checks` table, indexed `(service_id, inserted_at DESC)`.
-5. `/dev/flaky` endpoint plus seeds, so an incident can be triggered on demand.
+1. `incidents` and `incident_events` tables, with the partial unique index from
+   ADR-004: `CREATE UNIQUE INDEX ON incidents (service_id) WHERE resolved_at IS NULL`.
+2. Open an incident on the transition to `:down`, resolve it on the transition
+   back to `:healthy`. The hook goes in `ServiceMonitor.transition/2`, which is
+   already the single place a status change passes through.
+3. Treat the unique violation as "already open", not as an error.
+4. Broadcast on `organization:{id}:incidents`.
 
 ## Traps already hit
 
@@ -118,6 +136,18 @@ context yet; `create_service/2`, `update_service/3` and `delete_service/2` in
   the filter ever becomes unnecessary.
 - `user_fixture/0` now creates a personal organization as a side effect of
   registration. Tests that count a user's organizations must account for it.
+- `DynamicSupervisor.terminate_child/2` returns once the process is dead, but the
+  Registry drops its entry only when it handles the `:DOWN`. `stop_monitor/1`
+  therefore waits for the name to be released, or `restart_monitor/1` would fail
+  with `{:already_started, <dead pid>}`.
+- Monitor tests must be `async: false` with `set_mox_global`: the monitor and its
+  probe tasks are separate processes, so they need the shared sandbox connection
+  and a globally visible mock.
+- The check is broadcast from inside the same callback that updates the status,
+  so receiving `{:check_recorded, _}` does not mean the callback finished. Follow
+  it with a `GenServer.call` to synchronise before asserting on status.
+- `/dev/flaky/break` must not sit on the `:browser` pipeline: CSRF protection
+  rejects the POST with a 403.
 
 ## Open questions
 

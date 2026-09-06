@@ -43,6 +43,19 @@ defmodule PulseOpsWeb.Router do
       live_dashboard "/dashboard", metrics: PulseOpsWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
+
+    # A monitoring target that can be broken on demand, so an incident can be
+    # produced end to end without waiting for something real to fail.
+    scope "/dev", PulseOpsWeb do
+      pipe_through :api
+
+      get "/flaky", FlakyController, :show
+      # Deliberately on the api pipeline: the browser pipeline's CSRF protection
+      # would reject these, and the dashboard toggles the endpoint through a
+      # LiveView event rather than an HTTP post anyway.
+      post "/flaky/break", FlakyController, :break
+      post "/flaky/heal", FlakyController, :heal
+    end
   end
 
   ## Authentication routes
