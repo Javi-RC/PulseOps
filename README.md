@@ -8,6 +8,21 @@ when a service is genuinely down rather than briefly flaky, opens and resolves
 incidents on its own, and pushes every state change to connected dashboards over
 WebSockets. Nothing polls.
 
+## What it does
+
+- **Register services** — a name, a URL, how often to probe it and how long to wait.
+- **Watch them live** — a dashboard of every service with its recent history,
+  24-hour availability and the incidents currently open. It updates over a
+  WebSocket as the monitors see things change; nothing on the page polls.
+- **Read the detail** — response time over the recent checks, p50/p95/p99, uptime,
+  and the full list of probes behind the chart.
+- **Work through incidents** — opened and resolved automatically, with a timeline
+  that distinguishes what a monitor saw from what a person did. You move them
+  through the workflow and record the root cause.
+- **Share an organization** — invite people, give them one of four roles
+  (owner, admin, member, viewer) and change them later. Authorization is enforced
+  in the domain layer, not by hiding buttons.
+
 ## Resuming development
 
 Start here, in this order:
