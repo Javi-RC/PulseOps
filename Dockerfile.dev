@@ -12,8 +12,9 @@ RUN apt-get update -qq \
 
 RUN mix local.hex --force && mix local.rebar --force
 
-ENV MIX_ENV=dev \
-    LANG=C.UTF-8
+# MIX_ENV is deliberately not set: an explicit value would override the env that
+# `mix test` selects for itself, silently running the suite against dev config.
+ENV LANG=C.UTF-8
 
 WORKDIR /app
 
