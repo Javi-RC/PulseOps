@@ -251,6 +251,20 @@ defmodule PulseOps.Monitoring do
   end
 
   @doc """
+  Deletes `service_checks` older than `days` days.
+
+  Returns the number of deleted rows.
+  """
+  def prune_old_checks(days) when is_integer(days) and days > 0 do
+    cutoff = DateTime.add(DateTime.utc_now(), -days * 86_400, :second)
+
+    {count, _} =
+      Repo.delete_all(from c in Check, where: c.inserted_at < ^cutoff)
+
+    count
+  end
+
+  @doc """
   Availability and latency for a service over a window, aggregated in the
   database.
 
