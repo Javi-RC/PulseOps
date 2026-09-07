@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `develop` |
-| Phase | 8 complete — **released as `v0.2.0`** |
-| Next | V2 — Oban, alert rules, notifications, activity log, metric rollups |
-| Checks | `mix check` green: 330 tests, Credo `--strict` clean, Dialyzer clean |
+| Branch | `feature/alert-rules` (V2) |
+| Phase | 9 — alert rules (configurable thresholds + severity) |
+| Next | V2 — notifications, activity log, metric rollups |
+| Checks | `mix check` green |
 
 ## Commands
 
@@ -195,19 +195,59 @@ entries recorded and no author.
 landing, dashboard, services list, service detail (chart with both axes),
 members and settings all render; the switcher lists both organizations.
 
+### Phase 8 — Oban retention and cleanup
+
+- `Oban` wired into the app tree and configured (queues, testing mode in
+  `config/test.exs`). The `Oban.Migrations` migration adds the `oban_jobs`,
+  `oban_plugins` and `oban_peers` tables.
+- `PulseOps.Oban.RetentionJob` prunes old health checks
+  (`Monitoring.prune_old_checks/1`) nightly; `PurgeExpiredTokensJob` drops
+  expired auth tokens (`Accounts.purge_expired_tokens/0`). Both run on the
+  `:retention` queue, which is disabled in tests (`start_monitors: false` stays,
+  ADR-005).
+
+### Phase 9 — Configurable alert rules
+
+- **`alert_rules` table and `PulseOps.Monitoring.AlertRule` schema** replace the
+  hardcoded `@failure_threshold`/`@success_threshold`/`@degraded_ratio` in
+  `ServiceMonitor` and the environment-based severity in `Incidents.severity_for/1`.
+- Fields: `failure_threshold` (default 3), `success_threshold` (default 2),
+  `degraded_ratio` (0.0–1.0, default 0.5), `severity` (low/medium/high/critical,
+  default `:medium`), `organization_id` and nullable `service_id` (nil = the
+  organization-wide default).
+- Uniqueness on `(service_id)`: Postgres lets multiple rows hold NULL there, so an
+  organization may have several defaults while a service has at most one rule. A
+  plain index on `service_id` was deliberately **not** created — its generated name
+  collides with the unique index (a migration trap).
+- Context API in `Monitoring`: `list_alert_rules/1`, `get_rule_for_service/2`,
+  `create_alert_rule/2`, `update_alert_rule/3`, `delete_alert_rule/2`,
+  `change_alert_rule/3`, and the monitor-facing `rule_for_monitoring/1` which
+  resolves service-specific before org-default and **never returns nil** (falls
+  back to `AlertRule.default()` so the monitor always has a rule).
+- `AlertRule.default/0` mirrors the old hardcoded thresholds, preserving behaviour.
+  `AlertRule.for_monitoring/1` maps `nil` to that default.
+- `ServiceMonitor` resolves the rule on `init/1` and again on
+  `handle_continue(:reconcile_incident, ...)`, keeps it in state (`:rule`), and
+  drives `check_status/4`, `next_status/3`, `transition/3` and `open_incident/3`
+  from it. Severity now comes from `rule.severity`, not the environment.
+- `Incidents.open_incident/3` takes the rule and stamps `rule.severity`;
+  `severity_for/1` is gone.
+- Alert rules are authorized with `:manage_organization`.
+- Finding the org default exposed a real SQL pitfall: `service_id IN (id, NULL)`
+  never matches a NULL column (Postgres `x = NULL` is NULL), so the query must use
+  `service_id == ^id or is_nil(r.service_id)`.
+
+**Verified:** test suite green including a per-service rule that brings a service
+down on a single failure with critical severity and recovers on a single success.
+
 ## Next steps — V2
 
-Nothing here is started. In rough order of what adds most:
+In rough order of what adds most:
 
-1. **Oban** for work that should not sit in a monitor's callback: notifications,
-   and pruning `service_checks`, which is the fastest-growing table by far.
-2. **Alert rules** — replace the hardcoded thresholds in `ServiceMonitor`
-   (`@failure_threshold`, `@success_threshold`, `@degraded_ratio`) and the
-   environment-based severity in `Incidents.severity_for/1` with configurable rules.
-3. **Notifications**: Slack and generic webhooks first, email second.
-4. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
+1. **Notifications**: Slack and generic webhooks first, email second.
+2. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
    retention policy.
-5. **Activity log** for auditability.
+3. **Activity log** for auditability.
 
 Then V3: clustering with leader election so several nodes do not duplicate checks,
 Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique

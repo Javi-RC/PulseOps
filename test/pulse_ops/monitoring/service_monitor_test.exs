@@ -206,11 +206,44 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
       assert_receive {:incident_opened, incident}
       assert incident.service_id == service.id
       assert incident.status == :open
-      assert incident.severity == :critical
+      # The default alert rule carries severity :medium; a fixture service has no
+      # rule of its own, so the incident follows the default.
+      assert incident.severity == :medium
 
       assert %{events: [event]} = Incidents.get_incident!(scope, incident.id)
       assert event.type == :detected
       assert event.description =~ "connection refused"
+    end
+
+    test "honours a per-service alert rule: down on one failure, critical severity", %{
+      scope: scope,
+      service: service
+    } do
+      Incidents.subscribe_incidents(scope)
+
+      alert_rule_fixture(scope, %{
+        service_id: service.id,
+        failure_threshold: 1,
+        success_threshold: 1,
+        severity: :critical
+      })
+
+      stub_result(&down/0)
+
+      # The monitor's initial probe on boot is the only one needed: the rule
+      # requires a single failure to go down, and prods a critical incident.
+      start_monitor(service)
+
+      assert_receive {:incident_opened, incident}
+      assert incident.service_id == service.id
+      assert incident.severity == :critical
+
+      # The same rule lets a single success recover.
+      stub_result(&healthy/0)
+      probe(service)
+
+      assert ServiceMonitor.status(service.id).status == :healthy
+      assert_receive {:incident_resolved, _incident}
     end
 
     test "does not open a second one while the service stays down", %{

@@ -28,4 +28,24 @@ defmodule PulseOps.MonitoringFixtures do
     {:ok, service} = Monitoring.create_service(scope, valid_service_attributes(attrs))
     service
   end
+
+  @doc """
+  Valid attributes for an alert rule (the organization-wide default).
+  """
+  def valid_alert_rule_attributes(attrs \\ %{}) do
+    Enum.into(attrs, %{
+      failure_threshold: 3,
+      success_threshold: 2,
+      degraded_ratio: 0.5,
+      severity: :medium
+    })
+  end
+
+  @doc """
+  Generate an alert rule (organization default unless given a service_id).
+  """
+  def alert_rule_fixture(scope, attrs \\ %{}) do
+    {:ok, rule} = Monitoring.create_alert_rule(scope, valid_alert_rule_attributes(attrs))
+    rule
+  end
 end

@@ -8,6 +8,7 @@ defmodule PulseOpsWeb.DashboardLiveTest do
 
   alias PulseOps.Incidents
   alias PulseOps.Monitoring
+  alias PulseOps.Monitoring.AlertRule
 
   setup :register_and_log_in_user_with_org
 
@@ -55,7 +56,8 @@ defmodule PulseOpsWeb.DashboardLiveTest do
       {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
 
       assert html =~ "Payments API is unavailable"
-      assert html =~ "Critical"
+      # The default alert rule assigns :medium; no per-service rule exists.
+      assert html =~ "Medium"
       refute html =~ "Nothing is on fire"
     end
 
@@ -90,7 +92,8 @@ defmodule PulseOpsWeb.DashboardLiveTest do
       {:ok, live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
       assert html =~ "Nothing is on fire"
 
-      {:ok, _incident} = Incidents.open_incident(service, "connection refused")
+      {:ok, _incident} =
+        Incidents.open_incident(service, AlertRule.default(), "connection refused")
 
       html = render(live)
       assert html =~ "Payments API is unavailable"
@@ -116,7 +119,7 @@ defmodule PulseOpsWeb.DashboardLiveTest do
 
       {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
 
-      {:ok, _incident} = Incidents.open_incident(other_service)
+      {:ok, _incident} = Incidents.open_incident(other_service, AlertRule.default())
 
       html = render(live)
       assert html =~ "Nothing is on fire"

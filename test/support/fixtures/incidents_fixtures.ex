@@ -4,12 +4,14 @@ defmodule PulseOps.IncidentsFixtures do
   """
 
   alias PulseOps.Incidents
+  alias PulseOps.Monitoring.AlertRule
 
   @doc """
-  Opens an incident for a service, the way a monitor would.
+  Opens an incident for a service, the way a monitor would, using the hardcoded
+  default rule.
   """
   def incident_fixture(service, reason \\ "connection refused") do
-    {:ok, incident} = Incidents.open_incident(service, reason)
+    {:ok, incident} = Incidents.open_incident(service, AlertRule.default(), reason)
     incident
   end
 
