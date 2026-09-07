@@ -329,6 +329,23 @@ defmodule PulseOps.Monitoring do
     |> Map.new(fn {service_id, ratio} -> {service_id, ratio * 100} end)
   end
 
+  @doc """
+  Deletes `service_checks` older than `days`, the retention window for raw probe
+  data. The rolling charts and metrics derive from these rows, but beyond the
+  window they only occupy space; autovacuum reclaims it.
+
+  Returns the number of rows deleted.
+  """
+  def prune_old_checks(days) when is_integer(days) and days > 0 do
+    cutoff = DateTime.add(DateTime.utc_now(), -days, :day)
+
+    {deleted, _} =
+      from(c in Check, where: c.inserted_at < ^cutoff)
+      |> Repo.delete_all()
+
+    deleted
+  end
+
   defp to_metrics(nil), do: empty_metrics()
   defp to_metrics(%{total: 0}), do: empty_metrics()
 

@@ -148,8 +148,8 @@ Docker · ExUnit · Mox · Credo · Dialyzer · GitHub Actions
 
 ## Not built yet
 
-Alert rules, notifications (Slack, email, webhooks), background jobs with Oban,
-metric rollups and pruning, an activity log, clustering with leader election, and
-Prometheus/Grafana export. The groundwork is in place: `:telemetry` already emits
-per-check events, Oban is declared, and the partial unique index is what will make
-clustering safe.
+Alert rules, notifications (Slack, email, webhooks), metric rollups, an activity
+log, clustering with leader election, and Prometheus/Grafana export. The
+groundwork is in place: `:telemetry` already emits per-check events, Oban runs
+nightly retention jobs, and the partial unique index is what will make clustering
+safe.

@@ -12,6 +12,13 @@ defmodule PulseOps.Accounts.UserToken do
   @change_email_validity_in_days 7
   @session_validity_in_days 14
 
+  # The single source of truth for the per-context windows. Auth checks compare
+  # against these and the nightly purge job deletes rows past them, so changing
+  # a window here changes both.
+  def session_validity_days, do: @session_validity_in_days
+  def magic_link_validity_minutes, do: @magic_link_validity_in_minutes
+  def change_email_validity_days, do: @change_email_validity_in_days
+
   schema "users_tokens" do
     field :token, :binary
     field :context, :string

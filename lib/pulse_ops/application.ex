@@ -15,6 +15,9 @@ defmodule PulseOps.Application do
       # Needs the Repo and PubSub above it: monitors read services on boot and
       # broadcast status changes.
       PulseOps.Monitoring.Supervisor,
+      # Housekeeping jobs: check retention and expired token purge. Reads its
+      # config from the app env so tests and dev can swap the queue settings.
+      {Oban, Application.fetch_env!(:pulse_ops, Oban)},
       # Start to serve requests, typically the last entry
       PulseOpsWeb.Endpoint
     ]

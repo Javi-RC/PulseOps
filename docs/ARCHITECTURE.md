@@ -34,6 +34,7 @@ PulseOps.Application
 │   ├── Task.Supervisor                   (runs the HTTP requests)
 │   ├── MonitorSupervisor                 (DynamicSupervisor — one child per service)
 │   └── Bootstrapper                      (starts a monitor per enabled service at boot)
+├── Oban                                  (job queue — cron plugin runs nightly retention)
 └── PulseOpsWeb.Endpoint
 ```
 
