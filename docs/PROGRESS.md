@@ -7,10 +7,11 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/alert-rules` (V2) |
-| Phase | 9 — alert rules (configurable thresholds + severity) |
-| Next | V2 — notifications, activity log, metric rollups |
-| Checks | `mix check` green |
+| Branch | `develop` |
+| Phase | 9 complete — **released as `v0.3.0`** |
+| Next | V2 — alert rules, notifications, activity log, metric rollups |
+| Checks | `mix check` green: 336 tests, Credo `--strict` clean, Dialyzer clean |
+
 
 ## Commands
 
@@ -38,7 +39,7 @@ Docker Desktop must be running. On Windows it is at
   (postgres:17-alpine) and `web`.
 - Database config in `config/dev.exs` and `config/test.exs` reads `DATABASE_HOST`,
   defaulting to `db` so it works inside compose.
-- Added: Oban (declared, unused until V2), Credo, Dialyxir, Mox, StreamData.
+- Added: Oban (declared, now wired with housekeeping jobs), Credo, Dialyxir, Mox, StreamData.
 - `mix check` alias wired up.
 - `config :pulse_ops, start_monitors: false` already set in `config/test.exs` — see
   ADR-005, this must stay.
@@ -195,50 +196,26 @@ entries recorded and no author.
 landing, dashboard, services list, service detail (chart with both axes),
 members and settings all render; the switcher lists both organizations.
 
-### Phase 8 — Oban retention and cleanup
+### Phase 9 — Job queue and data retention
 
-- `Oban` wired into the app tree and configured (queues, testing mode in
-  `config/test.exs`). The `Oban.Migrations` migration adds the `oban_jobs`,
-  `oban_plugins` and `oban_peers` tables.
-- `PulseOps.Oban.RetentionJob` prunes old health checks
-  (`Monitoring.prune_old_checks/1`) nightly; `PurgeExpiredTokensJob` drops
-  expired auth tokens (`Accounts.purge_expired_tokens/0`). Both run on the
-  `:retention` queue, which is disabled in tests (`start_monitors: false` stays,
-  ADR-005).
-
-### Phase 9 — Configurable alert rules
-
-- **`alert_rules` table and `PulseOps.Monitoring.AlertRule` schema** replace the
-  hardcoded `@failure_threshold`/`@success_threshold`/`@degraded_ratio` in
-  `ServiceMonitor` and the environment-based severity in `Incidents.severity_for/1`.
-- Fields: `failure_threshold` (default 3), `success_threshold` (default 2),
-  `degraded_ratio` (0.0–1.0, default 0.5), `severity` (low/medium/high/critical,
-  default `:medium`), `organization_id` and nullable `service_id` (nil = the
-  organization-wide default).
-- Uniqueness on `(service_id)`: Postgres lets multiple rows hold NULL there, so an
-  organization may have several defaults while a service has at most one rule. A
-  plain index on `service_id` was deliberately **not** created — its generated name
-  collides with the unique index (a migration trap).
-- Context API in `Monitoring`: `list_alert_rules/1`, `get_rule_for_service/2`,
-  `create_alert_rule/2`, `update_alert_rule/3`, `delete_alert_rule/2`,
-  `change_alert_rule/3`, and the monitor-facing `rule_for_monitoring/1` which
-  resolves service-specific before org-default and **never returns nil** (falls
-  back to `AlertRule.default()` so the monitor always has a rule).
-- `AlertRule.default/0` mirrors the old hardcoded thresholds, preserving behaviour.
-  `AlertRule.for_monitoring/1` maps `nil` to that default.
-- `ServiceMonitor` resolves the rule on `init/1` and again on
-  `handle_continue(:reconcile_incident, ...)`, keeps it in state (`:rule`), and
-  drives `check_status/4`, `next_status/3`, `transition/3` and `open_incident/3`
-  from it. Severity now comes from `rule.severity`, not the environment.
-- `Incidents.open_incident/3` takes the rule and stamps `rule.severity`;
-  `severity_for/1` is gone.
-- Alert rules are authorized with `:manage_organization`.
-- Finding the org default exposed a real SQL pitfall: `service_id IN (id, NULL)`
-  never matches a NULL column (Postgres `x = NULL` is NULL), so the query must use
-  `service_id == ^id or is_nil(r.service_id)`.
-
-**Verified:** test suite green including a per-service rule that brings a service
-down on a single failure with critical severity and recovers on a single success.
+- Oban wired into `PulseOps.Application` with `Application.fetch_env!/2` so the
+  config is testable; queues disabled and `testing: :manual` in `config/test.exs`.
+- `add_oban_tables` migration via `Oban.Migrations.up()/down()`.
+- `PulseOps.Monitoring.RetentionJob` — nightly cron job that deletes
+  `service_checks` older than a configurable window (`:retention` app config,
+  default 30 days).  Accepts a `"days"` arg so tests drive it without touching the
+  global config.
+- `PulseOps.Accounts.PurgeExpiredTokensJob` — nightly cron job that deletes
+  `users_tokens` past their purpose-specific validity (sessions 14 d, magic links
+  15 min, change-email tokens 7 d).  Windows live in `UserToken` as public
+  accessors so auth checks and the purge job share one source of truth.
+- Both jobs live next to their contexts (`Monitoring` and `Accounts`) rather than
+  in a generic `jobs/` directory, and call clean context functions
+  (`prune_old_checks/1`, `purge_expired_tokens/0`) — the jobs are thin wrappers,
+  not owners of logic.
+- Context tests cover both functions (backdating via `Repo.update_all ... set:
+  [inserted_at: ...]`), and separate job test files exercise the workers through
+  `Oban.Testing.perform_job/2`.
 
 ## Next steps — V2
 

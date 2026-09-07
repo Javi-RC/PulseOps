@@ -383,4 +383,26 @@ defmodule PulseOps.MonitoringTest do
       assert %Ecto.Changeset{} = Monitoring.change_service(scope, service)
     end
   end
+
+  describe "prune_old_checks/1" do
+    test "deletes checks older than the window and keeps recent ones" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      recent = record(service, :healthy, 10)
+      old = record(service, :down, nil)
+
+      {1, nil} =
+        Repo.update_all(
+          from(c in PulseOps.Monitoring.Check, where: c.id == ^old.id),
+          set: [inserted_at: DateTime.add(DateTime.utc_now(), -31, :day)]
+        )
+
+      assert Monitoring.prune_old_checks(30) == 1
+      assert Repo.get(PulseOps.Monitoring.Check, old.id) == nil
+
+      assert %PulseOps.Monitoring.Check{} =
+               Repo.get(PulseOps.Monitoring.Check, recent.id)
+    end
+  end
 end
