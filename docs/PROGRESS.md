@@ -12,6 +12,7 @@ of each phase. **Read this first when picking the work back up.**
 | Next | V2 — alert rules, notifications, activity log, metric rollups |
 | Checks | `mix check` green: 336 tests, Credo `--strict` clean, Dialyzer clean |
 
+
 ## Commands
 
 There is no Elixir on the host. Everything goes through the container:
@@ -218,15 +219,12 @@ members and settings all render; the switcher lists both organizations.
 
 ## Next steps — V2
 
-Nothing here is started. In rough order of what adds most:
+In rough order of what adds most:
 
-1. **Alert rules** — replace the hardcoded thresholds in `ServiceMonitor`
-   (`@failure_threshold`, `@success_threshold`, `@degraded_ratio`) and the
-   environment-based severity in `Incidents.severity_for/1` with configurable rules.
-2. **Notifications**: Slack and generic webhooks first, email second.
-3. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
-   configurable retention policy.
-4. **Activity log** for auditability.
+1. **Notifications**: Slack and generic webhooks first, email second.
+2. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
+   retention policy.
+3. **Activity log** for auditability.
 
 Then V3: clustering with leader election so several nodes do not duplicate checks,
 Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique

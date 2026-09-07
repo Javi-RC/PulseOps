@@ -7,6 +7,7 @@ defmodule PulseOpsWeb.IncidentLiveTest do
   import PulseOps.OrganizationsFixtures
 
   alias PulseOps.Incidents
+  alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Organizations.Membership
   alias PulseOps.Repo
 
@@ -30,13 +31,13 @@ defmodule PulseOpsWeb.IncidentLiveTest do
       {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/incidents")
 
       assert html =~ "Payments API is unavailable"
-      assert html =~ "Critical"
+      assert html =~ "Medium"
     end
 
     test "appears live when an incident opens", %{conn: conn, scope: scope, service: service} do
       {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/incidents")
 
-      {:ok, _incident} = Incidents.open_incident(service)
+      {:ok, _incident} = Incidents.open_incident(service, AlertRule.default())
 
       assert render(live) =~ "Payments API is unavailable"
     end

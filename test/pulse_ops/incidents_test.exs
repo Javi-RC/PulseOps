@@ -7,6 +7,7 @@ defmodule PulseOps.IncidentsTest do
 
   alias PulseOps.Incidents
   alias PulseOps.Incidents.Incident
+  alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Repo
 
   setup do
@@ -16,13 +17,13 @@ defmodule PulseOps.IncidentsTest do
     %{scope: scope, service: service}
   end
 
-  describe "open_incident/2" do
+  describe "open_incident/3" do
     test "opens an incident carrying the service's organization", %{
       scope: scope,
       service: service
     } do
       assert {:ok, %Incident{} = incident} =
-               Incidents.open_incident(service, "connection refused")
+               Incidents.open_incident(service, AlertRule.default(), "connection refused")
 
       assert incident.service_id == service.id
       assert incident.organization_id == scope.organization.id
@@ -36,7 +37,8 @@ defmodule PulseOps.IncidentsTest do
       scope: scope,
       service: service
     } do
-      {:ok, incident} = Incidents.open_incident(service, "connection refused")
+      {:ok, incident} =
+        Incidents.open_incident(service, AlertRule.default(), "connection refused")
 
       assert %{events: [event]} = Incidents.get_incident!(scope, incident.id)
       assert event.type == :detected
@@ -45,19 +47,18 @@ defmodule PulseOps.IncidentsTest do
       assert event.user_id == nil
     end
 
-    test "derives severity from the environment", %{scope: scope} do
-      production = service_fixture(scope, %{name: "Prod", environment: :production})
-      staging = service_fixture(scope, %{name: "Staging", environment: :staging})
-      development = service_fixture(scope, %{name: "Dev", environment: :development})
+    test "assigns the severity from the alert rule, not the environment", %{scope: scope} do
+      service = service_fixture(scope, %{name: "Prod", environment: :production})
 
-      assert {:ok, %{severity: :critical}} = Incidents.open_incident(production)
-      assert {:ok, %{severity: :high}} = Incidents.open_incident(staging)
-      assert {:ok, %{severity: :medium}} = Incidents.open_incident(development)
+      rule = %{AlertRule.default() | severity: :critical}
+
+      assert {:ok, %{severity: :critical}} = Incidents.open_incident(service, rule)
     end
 
     test "returns the existing incident instead of opening a second one", %{service: service} do
-      {:ok, first} = Incidents.open_incident(service)
-      {:ok, second} = Incidents.open_incident(service)
+      rule = AlertRule.default()
+      {:ok, first} = Incidents.open_incident(service, rule)
+      {:ok, second} = Incidents.open_incident(service, rule)
 
       assert second.id == first.id
       assert Repo.aggregate(Incident, :count) == 1
@@ -85,14 +86,14 @@ defmodule PulseOps.IncidentsTest do
     test "allows a new incident once the previous one is resolved", %{service: service} do
       resolved_incident_fixture(service)
 
-      assert {:ok, %Incident{}} = Incidents.open_incident(service)
+      assert {:ok, %Incident{}} = Incidents.open_incident(service, AlertRule.default())
       assert Repo.aggregate(Incident, :count) == 2
     end
 
     test "announces the incident to the organization", %{scope: scope, service: service} do
       Incidents.subscribe_incidents(scope)
 
-      {:ok, incident} = Incidents.open_incident(service)
+      {:ok, incident} = Incidents.open_incident(service, AlertRule.default())
 
       assert_receive {:incident_opened, %Incident{id: id}}
       assert id == incident.id
@@ -263,7 +264,7 @@ defmodule PulseOps.IncidentsTest do
       incident = incident_fixture(service)
       {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
 
-      assert {:ok, %Incident{}} = Incidents.open_incident(service)
+      assert {:ok, %Incident{}} = Incidents.open_incident(service, AlertRule.default())
     end
 
     test "a viewer may not resolve", %{scope: scope, service: service} do
