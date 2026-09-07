@@ -51,3 +51,8 @@ config :pulse_ops, start_monitors: false
 # Probes go through a Mox mock, so tests can drive a service from healthy to
 # down and back without touching the network.
 config :pulse_ops, health_check_client: PulseOps.Monitoring.HealthCheckMock
+
+# Oban boots like in any environment (so job workers resolve their config), but
+# queues and cron never start during the suite — jobs run manually through
+# `Oban.Testing.perform_job/2`.
+config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual

@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `develop` |
-| Phase | 8 complete — **released as `v0.2.0`** |
-| Next | V2 — Oban, alert rules, notifications, activity log, metric rollups |
-| Checks | `mix check` green: 330 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | 9 complete — **released as `v0.3.0`** |
+| Next | V2 — alert rules, notifications, activity log, metric rollups |
+| Checks | `mix check` green: 336 tests, Credo `--strict` clean, Dialyzer clean |
 
 ## Commands
 
@@ -38,7 +38,7 @@ Docker Desktop must be running. On Windows it is at
   (postgres:17-alpine) and `web`.
 - Database config in `config/dev.exs` and `config/test.exs` reads `DATABASE_HOST`,
   defaulting to `db` so it works inside compose.
-- Added: Oban (declared, unused until V2), Credo, Dialyxir, Mox, StreamData.
+- Added: Oban (declared, now wired with housekeeping jobs), Credo, Dialyxir, Mox, StreamData.
 - `mix check` alias wired up.
 - `config :pulse_ops, start_monitors: false` already set in `config/test.exs` — see
   ADR-005, this must stay.
@@ -195,19 +195,38 @@ entries recorded and no author.
 landing, dashboard, services list, service detail (chart with both axes),
 members and settings all render; the switcher lists both organizations.
 
+### Phase 9 — Job queue and data retention
+
+- Oban wired into `PulseOps.Application` with `Application.fetch_env!/2` so the
+  config is testable; queues disabled and `testing: :manual` in `config/test.exs`.
+- `add_oban_tables` migration via `Oban.Migrations.up()/down()`.
+- `PulseOps.Monitoring.RetentionJob` — nightly cron job that deletes
+  `service_checks` older than a configurable window (`:retention` app config,
+  default 30 days).  Accepts a `"days"` arg so tests drive it without touching the
+  global config.
+- `PulseOps.Accounts.PurgeExpiredTokensJob` — nightly cron job that deletes
+  `users_tokens` past their purpose-specific validity (sessions 14 d, magic links
+  15 min, change-email tokens 7 d).  Windows live in `UserToken` as public
+  accessors so auth checks and the purge job share one source of truth.
+- Both jobs live next to their contexts (`Monitoring` and `Accounts`) rather than
+  in a generic `jobs/` directory, and call clean context functions
+  (`prune_old_checks/1`, `purge_expired_tokens/0`) — the jobs are thin wrappers,
+  not owners of logic.
+- Context tests cover both functions (backdating via `Repo.update_all ... set:
+  [inserted_at: ...]`), and separate job test files exercise the workers through
+  `Oban.Testing.perform_job/2`.
+
 ## Next steps — V2
 
 Nothing here is started. In rough order of what adds most:
 
-1. **Oban** for work that should not sit in a monitor's callback: notifications,
-   and pruning `service_checks`, which is the fastest-growing table by far.
-2. **Alert rules** — replace the hardcoded thresholds in `ServiceMonitor`
+1. **Alert rules** — replace the hardcoded thresholds in `ServiceMonitor`
    (`@failure_threshold`, `@success_threshold`, `@degraded_ratio`) and the
    environment-based severity in `Incidents.severity_for/1` with configurable rules.
-3. **Notifications**: Slack and generic webhooks first, email second.
-4. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
-   retention policy.
-5. **Activity log** for auditability.
+2. **Notifications**: Slack and generic webhooks first, email second.
+3. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
+   configurable retention policy.
+4. **Activity log** for auditability.
 
 Then V3: clustering with leader election so several nodes do not duplicate checks,
 Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique

@@ -288,6 +288,39 @@ defmodule PulseOps.Accounts do
     :ok
   end
 
+  @doc """
+  Deletes `users_tokens` past their purpose-specific validity: sessions last
+  `UserToken.session_validity_days()`, magic links
+  `UserToken.magic_link_validity_minutes()` and change-email tokens
+  `UserToken.change_email_validity_days()`. Rows past those windows can never be
+  validated again and only consume space.
+
+  Returns the number of tokens deleted.
+  """
+  def purge_expired_tokens do
+    now = DateTime.utc_now()
+
+    session_cutoff =
+      DateTime.add(now, -UserToken.session_validity_days(), :day)
+
+    magic_link_cutoff =
+      DateTime.add(now, -UserToken.magic_link_validity_minutes(), :minute)
+
+    change_email_cutoff =
+      DateTime.add(now, -UserToken.change_email_validity_days(), :day)
+
+    {deleted, _} =
+      from(t in UserToken,
+        where:
+          (t.context == "session" and t.inserted_at < ^session_cutoff) or
+            (t.context == "login" and t.inserted_at < ^magic_link_cutoff) or
+            (like(t.context, "change:%") and t.inserted_at < ^change_email_cutoff)
+      )
+      |> Repo.delete_all()
+
+    deleted
+  end
+
   ## Token helper
 
   defp update_user_and_delete_all_tokens(changeset) do

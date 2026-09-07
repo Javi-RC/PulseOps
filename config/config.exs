@@ -64,6 +64,24 @@ config :phoenix_live_view,
 # at the `config/runtime.exs`.
 config :pulse_ops, PulseOps.Mailer, adapter: Swoosh.Adapters.Local
 
+# Configure Oban, the job queue. Only housekeeping jobs run today — check
+# retention and expired token purge — alert rules and notifications will follow.
+# Tests disable the queues and drive jobs through `Oban.Testing`.
+config :pulse_ops, Oban,
+  repo: PulseOps.Repo,
+  queues: [default: 10],
+  plugins: [
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"@daily", PulseOps.Monitoring.RetentionJob},
+       {"@daily", PulseOps.Accounts.PurgeExpiredTokensJob}
+     ]}
+  ]
+
+# Data retention. `checks_retention_days` is the window for raw `service_checks`
+# rows — anything older is deleted nightly by `PulseOps.Monitoring.RetentionJob`.
+config :pulse_ops, :retention, checks_retention_days: 30
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",
