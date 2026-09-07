@@ -6,6 +6,7 @@ defmodule PulseOps.Monitoring do
   import Ecto.Query, warn: false
 
   alias PulseOps.Accounts.Scope
+  alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Check
   alias PulseOps.Monitoring.HealthCheck.Result
   alias PulseOps.Monitoring.MonitorSupervisor
@@ -327,6 +328,104 @@ defmodule PulseOps.Monitoring do
     )
     |> Repo.all()
     |> Map.new(fn {service_id, ratio} -> {service_id, ratio * 100} end)
+  end
+
+  ## Alert rules
+
+  @doc """
+  All alert rules in the scoped organization, those scoped to a specific service
+  first.
+  """
+  def list_alert_rules(%Scope{} = scope) do
+    from(r in AlertRule, where: r.organization_id == ^scope.organization.id)
+    |> order_by([r], asc: is_nil(r.service_id), asc: r.id)
+    |> preload(:service)
+    |> Repo.all()
+  end
+
+  @doc """
+  The alert rule for a given service in the scoped organization, or nil.
+
+  Resolution prefers the service's own rule and falls back to the organization
+  default. `nil` means the caller should use `AlertRule.default/0`.
+  """
+  def get_rule_for_service(%Scope{} = scope, %Service{id: service_id}) do
+    from(r in AlertRule,
+      where: r.organization_id == ^scope.organization.id,
+      where: r.service_id == ^service_id or is_nil(r.service_id),
+      order_by: [asc: is_nil(r.service_id)],
+      limit: 1
+    )
+    |> Repo.one()
+  end
+
+  @doc """
+  Creates an alert rule for the scoped organization, optionally bound to a single
+  service. A nil `service_id` makes it the organization default.
+  """
+  def create_alert_rule(%Scope{} = scope, attrs \\ %{}) do
+    with :ok <- Organizations.authorize(scope, :manage_organization),
+         {:ok, rule = %AlertRule{}} <-
+           %AlertRule{}
+           |> AlertRule.changeset(attrs, scope)
+           |> Repo.insert() do
+      {:ok, rule}
+    end
+  end
+
+  @doc """
+  Updates an alert rule belonging to the scoped organization.
+  """
+  def update_alert_rule(%Scope{} = scope, %AlertRule{} = rule, attrs) do
+    true = rule.organization_id == scope.organization.id
+
+    with :ok <- Organizations.authorize(scope, :manage_organization),
+         {:ok, rule = %AlertRule{}} <-
+           rule
+           |> AlertRule.changeset(attrs, scope)
+           |> Repo.update() do
+      {:ok, rule}
+    end
+  end
+
+  @doc """
+  Deletes an alert rule belonging to the scoped organization. Deleting a rule
+  restores the hardcoded defaults for that service.
+  """
+  def delete_alert_rule(%Scope{} = scope, %AlertRule{} = rule) do
+    true = rule.organization_id == scope.organization.id
+
+    with :ok <- Organizations.authorize(scope, :manage_organization),
+         {:ok, rule = %AlertRule{}} <- Repo.delete(rule) do
+      {:ok, rule}
+    end
+  end
+
+  @doc """
+  Changeset for alert rule forms.
+  """
+  def change_alert_rule(%Scope{} = scope, %AlertRule{} = rule, attrs \\ %{}) do
+    true = rule.organization_id == scope.organization.id
+
+    AlertRule.changeset(rule, attrs, scope)
+  end
+
+  @doc """
+  The alert rule that governs a service for monitoring and incident purposes —
+  service-specific, else organization default, else the hardcoded defaults.
+
+  This is the monitor-facing variant: it takes the service directly, since no
+  user is asking (a monitor has no scope). It never returns nil.
+  """
+  def rule_for_monitoring(%Service{organization_id: organization_id, id: service_id}) do
+    from(r in AlertRule,
+      where: r.organization_id == ^organization_id,
+      where: r.service_id == ^service_id or is_nil(r.service_id),
+      order_by: [asc: is_nil(r.service_id)],
+      limit: 1
+    )
+    |> Repo.one()
+    |> AlertRule.for_monitoring()
   end
 
   defp to_metrics(nil), do: empty_metrics()

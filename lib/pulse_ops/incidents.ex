@@ -14,6 +14,7 @@ defmodule PulseOps.Incidents do
   alias PulseOps.Accounts.Scope
   alias PulseOps.Incidents.Incident
   alias PulseOps.Incidents.IncidentEvent
+  alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Service
   alias PulseOps.Organizations
   alias PulseOps.Repo
@@ -41,17 +42,17 @@ defmodule PulseOps.Incidents do
   @doc """
   Opens an incident for a service that has just been reported down.
 
-  Returns `{:ok, incident}` with the existing incident if one is already open.
-  The partial unique index is what actually guarantees that, so a race between
-  two monitors ends with one insert and one no-op rather than a duplicate or a
-  crash (ADR-004).
+  The alert rule decides the severity. Returns `{:ok, incident}` with the
+  existing incident if one is already open. The partial unique index is what
+  actually guarantees that, so a race between two monitors ends with one insert
+  and one no-op rather than a duplicate or a crash (ADR-004).
   """
-  def open_incident(%Service{} = service, reason \\ nil) do
+  def open_incident(%Service{} = service, %AlertRule{} = rule, reason \\ nil) do
     attrs = %{
       service_id: service.id,
       organization_id: service.organization_id,
       title: "#{service.name} is unavailable",
-      severity: severity_for(service),
+      severity: rule.severity,
       started_at: DateTime.utc_now(:second)
     }
 
@@ -117,12 +118,6 @@ defmodule PulseOps.Incidents do
   def get_open_incident(%Service{id: service_id}) do
     Repo.one(from i in Incident, where: i.service_id == ^service_id and is_nil(i.resolved_at))
   end
-
-  # Production outages matter more than staging ones, and this is the only
-  # signal available without alert rules, which are V2.
-  defp severity_for(%Service{environment: :production}), do: :critical
-  defp severity_for(%Service{environment: :staging}), do: :high
-  defp severity_for(%Service{}), do: :medium
 
   defp detection_description(service, nil), do: "#{service.name} stopped responding"
 
