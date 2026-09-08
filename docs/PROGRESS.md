@@ -8,7 +8,7 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `main` |
-| Phase | 10 complete — alert rules UI and propagation |
+| Phase | 10 complete — alert rules UI and propagation (v0.3.0) |
 | Next | V2 — notifications, activity log, metric rollups |
 | Checks | `mix check` green: 366 tests, Credo `--strict` clean, Dialyzer clean |
 
