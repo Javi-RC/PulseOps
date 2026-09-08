@@ -79,6 +79,24 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
           <.button variant="primary" phx-disable-with="Saving...">Save changes</.button>
         </.form>
       </.card>
+
+      <.card class="mt-6 max-w-xl">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="font-medium">Alert rules</p>
+            <p class="mt-0.5 text-sm text-base-content/50">
+              When a service counts as down, how quickly it recovers, and how its incidents are
+              classified.
+            </p>
+          </div>
+          <.link
+            navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules"}
+            class="btn btn-soft btn-sm"
+          >
+            Edit rules
+          </.link>
+        </div>
+      </.card>
     </Layouts.app>
     """
   end

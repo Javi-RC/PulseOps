@@ -14,6 +14,7 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
   alias PulseOps.Monitoring.HealthCheckMock
   alias PulseOps.Monitoring.MonitorSupervisor
   alias PulseOps.Monitoring.ServiceMonitor
+  alias PulseOps.Repo
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -442,6 +443,209 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
 
       assert MonitorSupervisor.start_monitor(service) == {:ok, :disabled}
       assert ServiceMonitor.whereis(service.id) == nil
+    end
+
+    test "creating a per-service rule restarts the monitor so it re-reads the rule", %{
+      scope: scope
+    } do
+      stub_result(&down/0)
+      Incidents.subscribe_incidents(scope)
+
+      service = service_fixture(scope, %{check_interval_ms: 3_600_000})
+      on_exit(fn -> MonitorSupervisor.stop_monitor(service.id) end)
+
+      original = ServiceMonitor.whereis(service.id)
+      assert is_pid(original)
+
+      {:ok, _rule} =
+        Monitoring.create_alert_rule(scope, %{
+          service_id: service.id,
+          failure_threshold: 1,
+          success_threshold: 1,
+          severity: :critical
+        })
+
+      restarted = wait_for_new_pid(service.id, original)
+      assert restarted != original
+
+      # The rule is read when the monitor boots: wait for the boot probe to be
+      # recorded, then the incident it opened is already in our mailbox.
+      assert :ok = await_failures(service.id, 1)
+      assert_receive {:incident_opened, incident}, 1_000
+      assert incident.service_id == service.id
+      assert incident.severity == :critical
+      assert :ok = await_status(service.id, :down)
+    end
+
+    test "editing a rule restarts the monitor with the new thresholds", %{scope: scope} do
+      stub_result(&down/0)
+
+      service = service_fixture(scope, %{check_interval_ms: 3_600_000})
+      on_exit(fn -> MonitorSupervisor.stop_monitor(service.id) end)
+
+      {:ok, rule} =
+        Monitoring.create_alert_rule(scope, %{
+          service_id: service.id,
+          failure_threshold: 5,
+          success_threshold: 2,
+          severity: :medium
+        })
+
+      original = ServiceMonitor.whereis(service.id)
+      assert is_pid(original)
+
+      {:ok, _updated} =
+        Monitoring.update_alert_rule(scope, rule, %{
+          failure_threshold: 1,
+          success_threshold: 1,
+          severity: :high
+        })
+
+      restarted = wait_for_new_pid(service.id, original)
+      assert restarted != original
+
+      # Five failures were too many to prove; one now suffices, and the
+      # boot probe of the restarted monitor delivers it.
+      assert :ok = await_status(service.id, :down)
+    end
+
+    test "changing the organization default restarts every monitor", %{scope: scope} do
+      stub_result(&healthy/0)
+
+      one = service_fixture(scope, %{name: "One", check_interval_ms: 3_600_000})
+      two = service_fixture(scope, %{name: "Two", check_interval_ms: 3_600_000})
+
+      on_exit(fn ->
+        MonitorSupervisor.stop_monitor(one.id)
+        MonitorSupervisor.stop_monitor(two.id)
+      end)
+
+      one_pid = ServiceMonitor.whereis(one.id)
+      two_pid = ServiceMonitor.whereis(two.id)
+      assert is_pid(one_pid) and is_pid(two_pid)
+
+      # An organization default applies to every service, so all their monitors
+      # must restart for it to reach any of them.
+      {:ok, _default} =
+        Monitoring.create_alert_rule(scope, %{failure_threshold: 1, success_threshold: 1})
+
+      assert wait_for_new_pid(one.id, one_pid) != one_pid
+      assert wait_for_new_pid(two.id, two_pid) != two_pid
+    end
+
+    test "deleting a per-service rule restarts the monitor back on the default", %{
+      scope: scope
+    } do
+      stub_result(&down/0)
+
+      service = service_fixture(scope, %{check_interval_ms: 3_600_000})
+      on_exit(fn -> MonitorSupervisor.stop_monitor(service.id) end)
+
+      {:ok, rule} =
+        Monitoring.create_alert_rule(scope, %{
+          service_id: service.id,
+          failure_threshold: 100,
+          success_threshold: 1,
+          severity: :medium
+        })
+
+      original = ServiceMonitor.whereis(service.id)
+      assert is_pid(original)
+
+      # Under the per-service rule (needs 100 failures) a couple of probes are
+      # never enough to go down, even though the stubbed result is an error.
+      assert :ok = await_failures(service.id, 1)
+      ServiceMonitor.check_now(service.id)
+      assert :ok = await_failures(service.id, 2)
+      assert ServiceMonitor.status(service.id).status != :down
+
+      {:ok, _deleted} = Monitoring.delete_alert_rule(scope, rule)
+
+      restarted = wait_for_new_pid(service.id, original)
+      assert restarted != original
+
+      # Back on the hardcoded default, which needs three consecutive failures:
+      # the boot probe plus one more must not be enough, a third one must be.
+      assert :ok = await_failures(service.id, 1)
+      ServiceMonitor.check_now(service.id)
+      assert :ok = await_failures(service.id, 2)
+      assert ServiceMonitor.status(service.id).status != :down
+
+      ServiceMonitor.check_now(service.id)
+      assert :ok = await_failures(service.id, 3)
+      assert :ok = await_status(service.id, :down)
+    end
+
+    test "a monitor whose service is gone stops instead of crash-looping", %{scope: scope} do
+      stub_result(&down/0)
+
+      service = service_fixture(scope, %{check_interval_ms: 3_600_000})
+      on_exit(fn -> MonitorSupervisor.stop_monitor(service.id) end)
+
+      assert is_pid(ServiceMonitor.whereis(service.id))
+
+      # Let the first probe land and record while the service still exists.
+      assert :ok = await_failures(service.id, 1)
+
+      # Simulate the row vanishing under the monitor (e.g. a test sandbox rolling
+      # the service back) while the process is still happily running.
+      assert {:ok, _deleted} = Repo.delete(service)
+
+      ServiceMonitor.check_now(service.id)
+
+      # The probe cannot be stored: the foreign key no longer has a target. The
+      # monitor must stop cleanly, not crash and get restarted into a crash loop.
+      assert :ok = await_stopped(service.id)
+
+      # A crash loop would have restarted it within the boot delay (~1s), so
+      # reaching here with no monitor left proves it stayed down the normal way.
+      Process.sleep(1_200)
+      assert ServiceMonitor.whereis(service.id) == nil
+    end
+  end
+
+  # Polls until the monitor reports the expected value. The monitor re-reads its
+  # rule and fires a probe on boot, up to a second later, so an assertion right
+  # after a restart would race that probe (this is the same polling approach as
+  # wait_for_new_pid/3 above).
+  defp await_status(service_id, expected, attempts \\ 250) do
+    if ServiceMonitor.status(service_id).status == expected do
+      :ok
+    else
+      if attempts > 0 do
+        Process.sleep(20)
+        await_status(service_id, expected, attempts - 1)
+      else
+        ServiceMonitor.status(service_id).status
+      end
+    end
+  end
+
+  defp await_failures(service_id, expected, attempts \\ 250) do
+    case ServiceMonitor.status(service_id) do
+      %{consecutive_failures: failures} when failures >= expected ->
+        :ok
+
+      _ when attempts > 0 ->
+        Process.sleep(20)
+        await_failures(service_id, expected, attempts - 1)
+
+      info ->
+        info.consecutive_failures
+    end
+  end
+
+  defp await_stopped(service_id, attempts \\ 250) do
+    case ServiceMonitor.whereis(service_id) do
+      nil ->
+        :ok
+
+      _pid when attempts > 0 ->
+        Process.sleep(20)
+        await_stopped(service_id, attempts - 1)
+
+      _pid ->
+        :still_running
     end
   end
 

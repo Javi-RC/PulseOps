@@ -389,8 +389,8 @@ defmodule PulseOps.MonitoringTest do
       scope = organization_scope_fixture()
       service = service_fixture(scope)
 
-      recent = record(service, :healthy, 10)
-      old = record(service, :down, nil)
+      {:ok, recent} = record(service, :healthy, 10)
+      {:ok, old} = record(service, :down, nil)
 
       {1, nil} =
         Repo.update_all(

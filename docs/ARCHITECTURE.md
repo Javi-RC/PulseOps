@@ -45,6 +45,12 @@ Monitors are `restart: :transient` under a `DynamicSupervisor` with bounded
 `max_restarts`. A monitor whose endpoint makes it crash repeatedly is given up on
 without affecting any other monitor — fault isolation is the point of the design.
 
+A monitor reads its alert rule at boot, and the context restarts every monitor
+whose rule changed so the new thresholds reach them. If the service row
+disappears under a running monitor (a delete racing an in-flight probe), the
+failed insert tells the monitor to stop cleanly rather than be restarted into a
+boot-probe crash loop.
+
 ### Check cycle
 
 ```
@@ -72,13 +78,17 @@ restart. See ADR-002 for why the request is not made inline.
 
 ```
 organizations ──┬── organization_members ──── users
-                │
+                ├── alert_rules               (org default or per-service override)
                 └── services ──┬── service_checks
                                └── incidents ──── incident_events
 ```
 
 - `services` — name, description, environment, url, `check_interval_ms`,
   `timeout_ms`, `enabled`, current `status`, `last_checked_at`.
+- `alert_rules` — failure/success thresholds and a severity for incident handling;
+  `service_id` null is the organization default, otherwise it overrides one
+  service. Monitors read their rule on boot, so changing a rule restarts every
+  monitor that reads it.
 - `service_checks` — one row per probe: status, http status, response time, error.
   Grows quickly; indexed on `(service_id, inserted_at DESC)`. Rollups and pruning
   are V2 work.
