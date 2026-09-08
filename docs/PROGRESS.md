@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `develop` |
-| Phase | 9 complete — **released as `v0.3.0`** |
-| Next | V2 — alert rules, notifications, activity log, metric rollups |
-| Checks | `mix check` green: 336 tests, Credo `--strict` clean, Dialyzer clean |
+| Branch | `main` |
+| Phase | 10 complete — alert rules UI and propagation |
+| Next | V2 — notifications, activity log, metric rollups |
+| Checks | `mix check` green: 366 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -217,6 +217,33 @@ members and settings all render; the switcher lists both organizations.
   [inserted_at: ...]`), and separate job test files exercise the workers through
   `Oban.Testing.perform_job/2`.
 
+### Phase 10 — Alert rules UI and propagation
+
+- Alert *rules* already lived in the context (see PR #3); this phase gives them a
+  UI and makes them reach running monitors.
+- `AlertRuleLive.Index` at `/orgs/:org/settings/alert-rules` lists the
+  organization default and every per-service rule, with severity badges, and gates
+  the manage controls behind `:manage_organization` — a viewer sees everything,
+  changes nothing. Reached from a card on the organization settings page.
+- `AlertRuleLive.Form` creates and edits a rule. A per-service rule is picked from
+  a select that offers only services without a rule (plus an "Organization
+  default" option only if none exists yet); `degraded_ratio` is entered as a
+  percentage and converted at the boundary, like the service form's seconds.
+- **Rule changes propagate to running monitors**: creating, editing or deleting a
+  rule restarts every monitor that reads it — one for a per-service rule, all of
+  them for the organization default — because a monitor reads its rule at boot.
+- Fixed a crash-loop this wiring exposed: a probe that lands after its service row
+  is gone (sandbox rollback, or a delete racing an in-flight probe) failed the
+  `service_checks` foreign key, which crashed the monitor, which the
+  `:transient` restart turned into a boot-probe-crash loop. `record_check/3` now
+  returns `{:error, :service_not_found}` on that constraint and the monitor stops
+  on it instead.
+
+**Verified by tests:** creating a per-service rule restarts the monitor and its
+next probe opens an incident at the new severity; editing thresholds takes effect
+on the restarted monitor; the organization default restarts every monitor; and
+deleting a rule puts the monitor back on the built-in default.
+
 ## Next steps — V2
 
 In rough order of what adds most:
@@ -262,6 +289,11 @@ index (ADR-004) is already what makes the clustering step safe.
 - `/dev/flaky/break` must not sit on the `:browser` pipeline: CSRF protection
   rejects the POST with a 403.
 - A `<form>` with `phx-change` needs an `id`, or LiveView warns on every render.
+- `{:ok, check} = Repo.insert(...)` is not crash-proof once probes can outlive
+  their service: a check that lands after the row is gone fails the foreign key,
+  and under a `:transient` monitor that means a crash → restart → boot probe →
+  crash loop. `record_check/3` reports `{:error, :service_not_found}` instead, and
+  the monitor stops cleanly.
 - `{...}` inside a HEEx template is interpolation even inside `<pre><code>`; the
   ASCII diagram on the landing page needs `phx-no-curly-interpolation`.
 - `attach_hook(:handle_params)` raises for a LiveView not mounted through the
