@@ -174,9 +174,15 @@ defmodule PulseOps.Monitoring do
 
   @doc """
   Records the outcome of one probe and publishes it on the service's own topic.
+
+  Returns `{:ok, check}` once the probe is stored. A probe that lands after the
+  service row is gone — a delete racing an in-flight request, or a test sandbox
+  rolling a service back — cannot be stored because the foreign key has no
+  target, so this returns `{:error, :service_not_found}` instead. The caller's
+  monitor stops on that, rather than crashing and getting restarted into a loop.
   """
   def record_check(%Service{} = service, status, %Result{} = result) do
-    {:ok, check} =
+    changeset =
       %Check{}
       |> Check.changeset(%{
         service_id: service.id,
@@ -185,17 +191,32 @@ defmodule PulseOps.Monitoring do
         response_time_ms: result.response_time_ms,
         error: result.error
       })
-      |> Repo.insert()
 
-    # Individual checks go only to the service's own topic. The dashboard would
-    # be re-rendering constantly if every probe reached it (ADR-003).
-    Phoenix.PubSub.broadcast(
-      PulseOps.PubSub,
-      "service:#{service.id}:checks",
-      {:check_recorded, check}
-    )
+    case Repo.insert(changeset) do
+      {:ok, check} ->
+        # Individual checks go only to the service's own topic. The dashboard
+        # would be re-rendering constantly if every probe reached it (ADR-003).
+        Phoenix.PubSub.broadcast(
+          PulseOps.PubSub,
+          "service:#{service.id}:checks",
+          {:check_recorded, check}
+        )
 
-    check
+        {:ok, check}
+
+      {:error, changeset} ->
+        if service_gone?(changeset) do
+          {:error, :service_not_found}
+        else
+          {:error, changeset}
+        end
+    end
+  end
+
+  defp service_gone?(%Ecto.Changeset{} = changeset) do
+    Enum.any?(changeset.errors, fn {_field, {_message, metadata}} ->
+      metadata[:constraint] == :foreign
+    end)
   end
 
   @doc """
@@ -248,6 +269,20 @@ defmodule PulseOps.Monitoring do
     scope
     |> list_recent_checks(service, limit)
     |> Enum.reverse()
+  end
+
+  @doc """
+  Deletes `service_checks` older than `days` days.
+
+  Returns the number of deleted rows.
+  """
+  def prune_old_checks(days) when is_integer(days) and days > 0 do
+    cutoff = DateTime.add(DateTime.utc_now(), -days * 86_400, :second)
+
+    {count, _} =
+      Repo.delete_all(from c in Check, where: c.inserted_at < ^cutoff)
+
+    count
   end
 
   @doc """
@@ -369,6 +404,7 @@ defmodule PulseOps.Monitoring do
            %AlertRule{}
            |> AlertRule.changeset(attrs, scope)
            |> Repo.insert() do
+      restart_affected_monitors(scope, rule)
       {:ok, rule}
     end
   end
@@ -378,12 +414,14 @@ defmodule PulseOps.Monitoring do
   """
   def update_alert_rule(%Scope{} = scope, %AlertRule{} = rule, attrs) do
     true = rule.organization_id == scope.organization.id
+    previous_rule = rule
 
     with :ok <- Organizations.authorize(scope, :manage_organization),
          {:ok, rule = %AlertRule{}} <-
            rule
            |> AlertRule.changeset(attrs, scope)
            |> Repo.update() do
+      restart_affected_monitors(scope, previous_rule, rule)
       {:ok, rule}
     end
   end
@@ -397,7 +435,43 @@ defmodule PulseOps.Monitoring do
 
     with :ok <- Organizations.authorize(scope, :manage_organization),
          {:ok, rule = %AlertRule{}} <- Repo.delete(rule) do
+      restart_affected_monitors(scope, rule)
       {:ok, rule}
+    end
+  end
+
+  @doc """
+  Restarts the monitors whose running rules changed.
+
+  A monitor reads its alert rule once when it boots, so a rule change has no
+  effect until the process restarts. Public so callers with access to a service
+  (the monitor's owner) can do the same right after changing a rule directly.
+  """
+  def restart_affected_monitors(%Scope{} = scope, %AlertRule{} = rule) do
+    restart_affected_monitors(scope, rule, rule)
+  end
+
+  # An update can move a rule between a service and the organization default, so
+  # both the previous and the new binding need their monitors restarted.
+  defp restart_affected_monitors(%Scope{} = scope, %AlertRule{} = previous, %AlertRule{} = latest) do
+    [previous, latest]
+    |> Enum.flat_map(&service_ids_affected_by(scope, &1))
+    |> Enum.uniq()
+    |> Enum.each(&restart_monitor(scope, &1))
+  end
+
+  # No service_id means the rule is the organization default and applies to every
+  # service without a rule of its own, so every monitor in the org must restart.
+  defp service_ids_affected_by(%Scope{} = scope, %AlertRule{service_id: nil}) do
+    Enum.map(list_services(scope), & &1.id)
+  end
+
+  defp service_ids_affected_by(_scope, %AlertRule{service_id: service_id}), do: [service_id]
+
+  defp restart_monitor(%Scope{} = scope, service_id) do
+    case Repo.get_by(Service, id: service_id, organization_id: scope.organization.id) do
+      nil -> :ok
+      %Service{} = service -> MonitorSupervisor.restart_monitor(service)
     end
   end
 

@@ -150,7 +150,13 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
     state = %{state | task: nil, timeout_ref: nil}
 
-    {:noreply, state |> record(outcome) |> schedule_check(:regular)}
+    case record(state, outcome) do
+      {:ok, state} -> {:noreply, schedule_check(state, :regular)}
+      # The service is gone, so there is nothing left to probe. A normal stop
+      # does not count as an abnormal termination, so the supervisor leaves the
+      # monitor dead instead of restarting it into a boot-probe crash loop.
+      {:stop, state} -> {:stop, :normal, state}
+    end
   end
 
   # The probe process died without reporting. async_nolink means this reaches us
@@ -161,7 +167,10 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     outcome = {:error, %Result{error: "health check crashed: #{inspect(reason)}"}}
     state = %{state | task: nil, timeout_ref: nil}
 
-    {:noreply, state |> record(outcome) |> schedule_check(:regular)}
+    case record(state, outcome) do
+      {:ok, state} -> {:noreply, schedule_check(state, :regular)}
+      {:stop, state} -> {:stop, :normal, state}
+    end
   end
 
   # The probe overran even its own timeout. Req should have given up already, so
@@ -173,7 +182,10 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     outcome = {:error, %Result{error: "health check timed out"}}
     state = %{state | task: nil, timeout_ref: nil}
 
-    {:noreply, state |> record(outcome) |> schedule_check(:regular)}
+    case record(state, outcome) do
+      {:ok, state} -> {:noreply, schedule_check(state, :regular)}
+      {:stop, state} -> {:stop, :normal, state}
+    end
   end
 
   # Late messages from a probe we already gave up on. The two-tuple clause also
@@ -228,12 +240,18 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
       %{service_id: state.service.id, status: check_status}
     )
 
-    Monitoring.record_check(state.service, check_status, result)
+    case Monitoring.record_check(state.service, check_status, result) do
+      {:ok, _check} ->
+        if next_status == state.status do
+          {:ok, state}
+        else
+          {:ok, transition(state, next_status, result)}
+        end
 
-    if next_status == state.status do
-      state
-    else
-      transition(state, next_status, result)
+      # No point recording a status for a service that no longer exists: tell the
+      # caller to stop the monitor instead (see record_check/3).
+      {:error, :service_not_found} ->
+        {:stop, state}
     end
   end
 

@@ -16,13 +16,13 @@ defmodule PulseOps.Monitoring.RetentionJobTest do
   end
 
   test "prunes checks older than the given days", %{service: service} do
-    recent =
+    {:ok, recent} =
       Monitoring.record_check(service, :healthy, %Result{
         http_status: 200,
         response_time_ms: 10
       })
 
-    old =
+    {:ok, old} =
       Monitoring.record_check(service, :down, %Result{
         error: "down"
       })
@@ -39,7 +39,7 @@ defmodule PulseOps.Monitoring.RetentionJobTest do
   end
 
   test "falls back to the configured retention window", %{service: service} do
-    old =
+    {:ok, old} =
       Monitoring.record_check(service, :down, %Result{
         error: "down"
       })

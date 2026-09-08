@@ -19,6 +19,9 @@ WebSockets. Nothing polls.
 - **Work through incidents** — opened and resolved automatically, with a timeline
   that distinguishes what a monitor saw from what a person did. You move them
   through the workflow and record the root cause.
+- **Alert on your terms** — each service, or the whole organization, has an alert
+  rule: how many failed probes open an incident, how many successes close it, and
+  the severity it is reported as.
 - **Share an organization** — invite people, give them one of four roles
   (owner, admin, member, viewer) and change them later. Authorization is enforced
   in the domain layer, not by hiding buttons.
@@ -112,8 +115,11 @@ The decisions worth knowing about, all argued in [`docs/DECISIONS.md`](docs/DECI
   also means a crash inside the request cannot take the monitor down.
 - **Jittered scheduling**, so monitors that started together do not settle into
   lockstep and hit shared infrastructure in bursts.
-- **Three failures to go down, two successes to recover.** Failing over on a
-  single bad probe turns every transient blip into an incident.
+- **Alert rules, not hardcoded thresholds.** A service or the organization sets
+  how many failed probes open an incident and how many successes close it, plus
+  the severity. The default remains three failures to go down and two successes
+  to recover, and the rules reach running monitors by restarting the ones that
+  read them.
 - **A partial unique index** — `incidents (service_id) WHERE resolved_at IS NULL` —
   makes "at most one open incident per service" a database guarantee rather than an
   application convention, so two racing monitors produce one insert and one no-op.
@@ -148,8 +154,7 @@ Docker · ExUnit · Mox · Credo · Dialyzer · GitHub Actions
 
 ## Not built yet
 
-Alert rules, notifications (Slack, email, webhooks), metric rollups, an activity
-log, clustering with leader election, and Prometheus/Grafana export. The
-groundwork is in place: `:telemetry` already emits per-check events, Oban runs
-nightly retention jobs, and the partial unique index is what will make clustering
-safe.
+Notifications (Slack, email, webhooks), metric rollups, an activity log,
+clustering with leader election, and Prometheus/Grafana export. The groundwork is
+in place: `:telemetry` already emits per-check events, Oban runs nightly
+retention jobs, and the partial unique index is what will make clustering safe.
