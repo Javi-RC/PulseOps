@@ -16,6 +16,7 @@ defmodule PulseOps.Incidents do
   alias PulseOps.Incidents.IncidentEvent
   alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Service
+  alias PulseOps.Notifications
   alias PulseOps.Organizations
   alias PulseOps.Repo
 
@@ -69,6 +70,7 @@ defmodule PulseOps.Incidents do
     |> case do
       {:ok, %{incident: incident}} ->
         broadcast(service.organization_id, {:incident_opened, incident})
+        Notifications.enqueue_incident_notifications(service.organization_id, incident, :opened)
         {:ok, incident}
 
       {:error, :incident, changeset, _changes} ->
@@ -104,6 +106,13 @@ defmodule PulseOps.Incidents do
         |> case do
           {:ok, %{incident: incident}} ->
             broadcast(service.organization_id, {:incident_resolved, incident})
+
+            Notifications.enqueue_incident_notifications(
+              service.organization_id,
+              incident,
+              :resolved
+            )
+
             {:ok, incident}
 
           {:error, :incident, changeset, _changes} ->
@@ -238,6 +247,7 @@ defmodule PulseOps.Incidents do
       |> case do
         {:ok, %{incident: updated}} ->
           broadcast(scope.organization.id, {:incident_resolved, updated})
+          Notifications.enqueue_incident_notifications(scope.organization.id, updated, :resolved)
           {:ok, updated}
 
         {:error, :incident, changeset, _changes} ->

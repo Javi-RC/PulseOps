@@ -56,3 +56,6 @@ config :pulse_ops, health_check_client: PulseOps.Monitoring.HealthCheckMock
 # queues and cron never start during the suite — jobs run manually through
 # `Oban.Testing.perform_job/2`.
 config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual
+
+# Route every webhook delivery through the Req.Test stub so nothing touches the network.
+config :pulse_ops, webhook_client: :stub

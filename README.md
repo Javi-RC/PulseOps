@@ -22,6 +22,9 @@ WebSockets. Nothing polls.
 - **Alert on your terms** — each service, or the whole organization, has an alert
   rule: how many failed probes open an incident, how many successes close it, and
   the severity it is reported as.
+- **Never miss an incident** — a generic webhook (Discord, Teams, ntfy, Make…) and
+  an email channel per organization, each with its own queue and retry budget, so
+  a slow receiver never slows the monitor that spotted the incident.
 - **Share an organization** — invite people, give them one of four roles
   (owner, admin, member, viewer) and change them later. Authorization is enforced
   in the domain layer, not by hiding buttons.
