@@ -1,8 +1,9 @@
 defmodule PulseOpsWeb.NotifierLive.Form do
   @moduledoc """
   Creates and edits a notification channel. The channel type decides which
-  destination field is shown and required: a URL for webhooks, a recipient
-  address for email.
+  destination field is shown and required: a URL for webhooks and, for email,
+  the organization users it reaches. A notifier may be narrowed to a single
+  service, so incidents elsewhere never trigger it.
   """
 
   use PulseOpsWeb, :live_view
@@ -10,6 +11,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
   import PulseOpsWeb.UIComponents
 
   alias Phoenix.HTML.Form
+  alias PulseOps.Monitoring
   alias PulseOps.Notifications
   alias PulseOps.Notifications.Notifier
 
@@ -31,6 +33,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
         socket
         |> assign(:page_title, "Edit notifier")
         |> assign(:notifier, notifier)
+        |> assign_choices()
         |> assign_form(Notifications.change_notifier(scope, notifier))
     end
   end
@@ -42,6 +45,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
     socket
     |> assign(:page_title, "New notifier")
     |> assign(:notifier, notifier)
+    |> assign_choices()
     |> assign_form(Notifications.change_notifier(scope, notifier))
   end
 
@@ -95,6 +99,15 @@ defmodule PulseOpsWeb.NotifierLive.Form do
      |> push_navigate(to: notifiers_path(socket.assigns.current_scope))}
   end
 
+  defp assign_choices(socket) do
+    scope = socket.assigns.current_scope
+
+    assign(socket,
+      services: Monitoring.list_services(scope),
+      assignees: Notifications.assignee_options(scope)
+    )
+  end
+
   # An unchecked checkbox submits nothing, so the changeset would never see the
   # toggle turned off. Falling back to "false" keeps the boolean honest in both
   # directions.
@@ -129,8 +142,9 @@ defmodule PulseOpsWeb.NotifierLive.Form do
     >
       <.page_header title={@page_title}>
         <:subtitle>
-          Incidents are announced to every enabled notifier when they open and when they
-          resolve. Pause a notifier to keep it around without hearing from it.
+          Incidents are announced to the people and receivers assigned to a notifier when
+          they open and when they resolve. Pause a notifier to keep it around without
+          hearing from it.
         </:subtitle>
       </.page_header>
 
@@ -149,6 +163,20 @@ defmodule PulseOpsWeb.NotifierLive.Form do
                 label="Type"
                 options={Enum.map(Notifier.types(), &{Phoenix.Naming.humanize(&1), &1})}
               />
+
+              <div class="mt-4">
+                <.input
+                  field={@form[:service_id]}
+                  type="select"
+                  label="Scope"
+                  prompt="Every service in the organization"
+                  options={Enum.map(@services, &{&1.name, &1.id})}
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  Leave on "Every service" to fire for any incident, or pick one service to be
+                  told only about it.
+                </p>
+              </div>
 
               <%= if channel_type(@form) == :webhook do %>
                 <div class="mt-4">
@@ -175,35 +203,35 @@ defmodule PulseOpsWeb.NotifierLive.Form do
                     Optional. Sent as a Bearer token in the Authorization header.
                   </p>
                 </div>
-              <% else %>
-                <div class="mt-4">
-                  <.input
-                    field={@form[:recipient]}
-                    type="email"
-                    label="Recipient"
-                    placeholder="oncall@example.com"
-                    required
-                  />
-                  <p class="mt-1 text-xs text-base-content/50">
-                    Emails are plain text and sent through the configured mailer, so a phone
-                    notification service can relay them.
-                  </p>
-                </div>
               <% end %>
             </.card>
 
             <.card>
               <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                Delivery
+                People
               </h2>
               <.input
-                field={@form[:enabled]}
-                type="checkbox"
-                label="Enabled"
+                field={@form[:assignee_ids]}
+                type="select"
+                multiple
+                label="Assigned members"
+                options={@assignees}
               />
               <p class="mt-1 text-xs text-base-content/50">
-                When off, the notifier is kept but nothing is sent to it.
+                Email notifiers send a copy to every member selected here. Webhooks treat the
+                selection as the people responsible for the channel.
               </p>
+
+              <div class="mt-5">
+                <.input
+                  field={@form[:enabled]}
+                  type="checkbox"
+                  label="Enabled"
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  When off, the notifier is kept but nothing is sent to it.
+                </p>
+              </div>
             </.card>
           </div>
 

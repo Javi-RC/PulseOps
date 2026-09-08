@@ -247,9 +247,12 @@ deleting a rule puts the monitor back on the built-in default.
 ### Phase 11 — Incident notifications (webhook + email)
 
 - A `Notifier` is a delivery channel an organization configures: a generic webhook
-  URL (`:webhook`) or an email address (`:email`). Both can be paused with
-  `enabled` — kept but no longer addressed. `notifiers` table is
-  organization-scoped; channel type decides which destination field is required.
+  URL (`:webhook`) or an email (`:email`). Both can be paused with `enabled` —
+  kept but no longer addressed. The `notifiers` table is organization-scoped and
+  optionally narrowed to a single `service_id` (nil = fires for any incident in
+  the organization). Email notifiers reach each user assigned via the
+  `notifier_assignments` join table (one copy per person); webhooks record the
+  responsible people through the same assignments.
 - **Webhooks** get a POST of flat JSON (event, incident, service, organization) so
   Discord, Teams, Mattermost, ntfy, Gotify, Make, n8n or a script can consume it
   with no PulseOps schema knowledge. An optional `secret_token` is sent as a
@@ -261,21 +264,26 @@ deleting a rule puts the monitor back on the built-in default.
   adapter to Swoosh's Brevo one with Req as the API client.
 - **Delivery is queued, never inline.** `enqueue_incident_notifications/3` — called
   from `PulseOps.Incidents` after an incident opens or resolves — queues one
-  `NotifyJob` per enabled notifier. Each notifier gets its own job and retry
+  `NotifyJob` per matching enabled notifier (matching = enabled, same
+  organization, and service-wide or narrowed to the incident's service). Each
+  notifier gets its own job and retry
   budget (`max_attempts: 5`), so a slow or down receiver never blocks the monitor.
 - `NotifyJob` is deliberately quiet when a notifier or incident is gone by the
   time it runs (deleted, or paused): no error is logged for a channel that no
   longer exists.
-- `NotifierLive.Index` lists channels with Active/Paused pills and delete;
-  `NotifierLive.Form` switches the destination fields by type. Manage controls
+- `NotifierLive.Index` lists channels with service scope, Active/Paused pills and
+  delete; `NotifierLive.Form` switches a scope dropdown (every service / one) and
+  an assigned-members multi-select by type. Manage controls
   are gated behind `:manage_organization`, like alert rules. Both are reached from
   a "Notifications" card on the organization settings page.
 - In tests, webhook deliveries go through Req's test plug adapter
   (`config :pulse_ops, webhook_client: :stub`) so nothing touches the network.
 
 **Verified by tests:** payload shape and bearer header, retry on HTTP 500,
-no-op on deleted/paused notifier or deleted incident, email subject/body/to, and
-enqueue-once-per-enabled-notifier for both open and resolve.
+no-op on deleted/paused notifier or deleted incident, email subject/body/to and
+per-assignee delivery, enqueue-once per matching notifier for both open and
+resolve, service narrowing (a notifier for another service does not fire), and
+cross-organization service rejection.
 
 ## Next steps — V2
 

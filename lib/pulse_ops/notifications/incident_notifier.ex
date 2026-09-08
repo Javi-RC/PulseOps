@@ -16,11 +16,21 @@ defmodule PulseOps.Notifications.IncidentNotifier do
   alias PulseOps.Notifications.Notifier
 
   @doc """
-  Sends one notification email. Returns `{:ok, metadata}` or `{:error, reason}`,
+  Sends one notification email to each user assigned to the notifier, returning
+  `{:ok, metadata}` from the last delivery or `{:error, reason}` if any fails,
   letting the Oban job retry a failed delivery.
   """
-  def deliver(%Notifier{recipient: recipient}, %Incident{} = incident, event)
-      when event in ["opened", "resolved"] do
+  def deliver(%Notifier{assigned_users: users}, %Incident{} = incident, event)
+      when event in ["opened", "resolved"] and is_list(users) do
+    Enum.reduce_while(users, {:ok, nil}, fn user, _acc ->
+      case deliver_one(user.email, incident, event) do
+        {:ok, metadata} -> {:cont, {:ok, metadata}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp deliver_one(recipient, %Incident{} = incident, event) do
     email =
       new()
       |> to(recipient)

@@ -41,12 +41,28 @@ defmodule PulseOps.NotificationsTest do
       assert {:ok, notifier} =
                Notifications.create_notifier(scope, %{
                  name: "On-call",
-                 type: :email,
-                 recipient: "oncall@example.com"
+                 type: :email
                })
 
       assert notifier.organization_id == scope.organization.id
       assert notifier.enabled == true
+      assert notifier.assigned_users == []
+    end
+
+    test "creates a notifier with its assigned users" do
+      scope = organization_scope_fixture()
+      user_a = assignee_id_fixture(scope)
+      user_b = assignee_id_fixture(scope)
+
+      {:ok, notifier} =
+        Notifications.create_notifier(scope, %{
+          name: "On-call",
+          type: :email,
+          assignee_ids: [user_a, user_b]
+        })
+
+      assert notifier.assigned_users |> Enum.map(& &1.id) |> Enum.sort() ==
+               Enum.sort([user_a, user_b])
     end
 
     test "refuses a viewer" do
@@ -58,12 +74,19 @@ defmodule PulseOps.NotificationsTest do
   end
 
   describe "update_notifier/3 and delete_notifier/2" do
-    test "updates a notifier" do
+    test "updates a notifier and its assignments" do
       scope = organization_scope_fixture()
+      user = assignee_id_fixture(scope)
       notifier = notifier_fixture(scope)
 
-      assert {:ok, updated} = Notifications.update_notifier(scope, notifier, %{enabled: false})
+      assert {:ok, updated} =
+               Notifications.update_notifier(scope, notifier, %{
+                 enabled: false,
+                 assignee_ids: [user]
+               })
+
       assert updated.enabled == false
+      assert updated.assigned_users |> Enum.map(& &1.id) == [user]
     end
 
     test "deletes a notifier" do
@@ -93,13 +116,33 @@ defmodule PulseOps.NotificationsTest do
     test "queues one delivery job per enabled notifier" do
       scope = organization_scope_fixture()
       webhook = notifier_fixture(scope)
-      email = notifier_fixture(scope, %{type: :email, recipient: "oncall@example.com"})
+      email = notifier_fixture(scope, %{type: :email})
       notifier_fixture(scope, %{enabled: false})
 
       {:ok, incident} = open_incident(scope)
 
       assert_enqueued(worker: NotifyJob, args: job_args(webhook, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(email, incident, "opened"))
+    end
+
+    test "only fires notifiers narrowed to the incident's service" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+      other_service = service_fixture(scope)
+
+      targeted = notifier_fixture(scope, %{service_id: service.id})
+      other_targeted = notifier_fixture(scope, %{service_id: other_service.id})
+      org_wide = notifier_fixture(scope)
+
+      {:ok, incident} = Incidents.open_incident(service, AlertRule.default())
+
+      assert_enqueued(worker: NotifyJob, args: job_args(targeted, incident, "opened"))
+      assert_enqueued(worker: NotifyJob, args: job_args(org_wide, incident, "opened"))
+
+      refute_enqueued(
+        worker: NotifyJob,
+        args: job_args(other_targeted, incident, "opened")
+      )
     end
 
     test "queues nothing when there are no enabled notifiers" do

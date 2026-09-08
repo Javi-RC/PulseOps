@@ -98,10 +98,13 @@ organizations ──┬── organization_members ──── users
   A partial unique index enforces at most one unresolved incident per service (ADR-004).
 - `incident_events` — the timeline; `user_id` is null for automatic events.
 - `notifiers` — where an organization is told about incidents: a `:webhook` (URL +
-  optional bearer `secret_token`) or an `:email` (recipient), with `enabled` to
-  pause without deleting. When an incident opens or resolves,
-  `PulseOps.Notifications` queues one `NotifyJob` per enabled notifier; a slow
-  receiver never blocks the monitor.
+  optional bearer `secret_token`) or an `:email`, with `enabled` to pause without
+  deleting. A notifier is `:organization`-scoped and may be narrowed to a single
+  `service_id` (nil = any incident in the organization). Email notifiers reach the
+  organization users linked through `notifier_assignments`, one copy each; for
+  webhooks the assignments record who is responsible for the channel. When an
+  incident opens or resolves, `PulseOps.Notifications` queues one `NotifyJob` per
+  matching enabled notifier; a slow receiver never blocks the monitor.
 
 ## Tenancy
 
