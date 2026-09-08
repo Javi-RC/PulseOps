@@ -8,7 +8,7 @@ defmodule PulseOps.Notifications.Notifier do
     * `:webhook` — any URL that accepts a POST of JSON. Discord, Teams,
       Mattermost, ntfy, Gotify or a script of your own; `secret_token` is sent
       as a `Bearer` header when present.
-    * `:email` — a plain recipient address, delivered through `PulseOps.Mailer`.
+    * `:email` — a plain recipient address, delivered through `PulseOps.Notifications.Mailer`.
 
   A notifier is just configuration. Delivery is queued as an Oban job by
   `PulseOps.Notifications` when an incident changes state, so a slow receiver

@@ -1,6 +1,7 @@
 defmodule PulseOps.Notifications.IncidentNotifier do
   @moduledoc """
-  The incident notification emails, sent through `PulseOps.Mailer` (Swoosh).
+  The incident notification emails, sent through `PulseOps.Notifications.Mailer`
+  (Swoosh).
 
   The body is plain text on purpose: incident mail is read on a phone or from a
   pager, and a wall of markup helps nobody. The email provider is chosen by
@@ -11,7 +12,7 @@ defmodule PulseOps.Notifications.IncidentNotifier do
   import Swoosh.Email
 
   alias PulseOps.Incidents.Incident
-  alias PulseOps.Mailer
+  alias PulseOps.Notifications.Mailer
   alias PulseOps.Notifications.Notifier
 
   @doc """

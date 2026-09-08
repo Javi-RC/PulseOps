@@ -67,6 +67,11 @@ config :pulse_ops, PulseOps.Mailer,
   from: "contact@example.com",
   from_name: "PulseOps"
 
+config :pulse_ops, PulseOps.Notifications.Mailer,
+  adapter: Swoosh.Adapters.Local,
+  from: "contact@example.com",
+  from_name: "PulseOps"
+
 # Configure Oban, the job queue. Housekeeping jobs (check retention, expired
 # token purge) and notification deliveries run on the default queue. Tests
 # disable the queues and drive jobs through `Oban.Testing`.
