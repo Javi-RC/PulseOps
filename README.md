@@ -42,11 +42,17 @@ Start here, in this order:
 Everything runs in Docker; no Elixir installation is required on the host.
 
 ```bash
+cp .env.example .env                      # optional; the compose file reads .env
 docker compose build
 docker compose run --rm web mix deps.get
 docker compose run --rm web mix ecto.setup   # migrates and seeds demo data
 docker compose up web
 ```
+
+Without `.env` Docker Compose refuses to start, so create it from
+`.env.example` first. With `BREVO_API_KEY` set, incident emails are actually
+sent through Brevo; without it they land in the development mailbox at
+`/dev/mailbox`.
 
 The app is served at http://localhost:4000. Register an account, or log in as the
 seeded `demo@pulseops.test` — magic-link emails are captured at `/dev/mailbox`.
@@ -157,7 +163,8 @@ Docker · ExUnit · Mox · Credo · Dialyzer · GitHub Actions
 
 ## Not built yet
 
-Notifications (Slack, email, webhooks), metric rollups, an activity log,
+Slack (the generic webhook channel already speaks its format, but an official
+Slack app/bolt integration is not built), metric rollups, an activity log,
 clustering with leader election, and Prometheus/Grafana export. The groundwork is
 in place: `:telemetry` already emits per-check events, Oban runs nightly
 retention jobs, and the partial unique index is what will make clustering safe.
