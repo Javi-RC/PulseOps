@@ -7,9 +7,9 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | 10 complete — alert rules UI and propagation (v0.3.0) |
-| Next | V2 — notifications, activity log, metric rollups |
+| Branch | `feature/incident-notifications` |
+| Phase | 11 in progress — incident notifications (webhook + email) |
+| Next | V2 — activity log, metric rollups |
 | Checks | `mix check` green: 366 tests, Credo `--strict` clean, Dialyzer clean |
 
 
@@ -244,14 +244,46 @@ next probe opens an incident at the new severity; editing thresholds takes effec
 on the restarted monitor; the organization default restarts every monitor; and
 deleting a rule puts the monitor back on the built-in default.
 
+### Phase 11 — Incident notifications (webhook + email)
+
+- A `Notifier` is a delivery channel an organization configures: a generic webhook
+  URL (`:webhook`) or an email address (`:email`). Both can be paused with
+  `enabled` — kept but no longer addressed. `notifiers` table is
+  organization-scoped; channel type decides which destination field is required.
+- **Webhooks** get a POST of flat JSON (event, incident, service, organization) so
+  Discord, Teams, Mattermost, ntfy, Gotify, Make, n8n or a script can consume it
+  with no PulseOps schema knowledge. An optional `secret_token` is sent as a
+  `Bearer` header. A non-2xx response or a transport error is returned so the job
+  retries.
+- **Email** is plain text on purpose (pager/phone friendly), delivered via Swoosh.
+  The sender defaults are in app config; `runtime.exs` and `prod.exs` read
+  `MAILER_FROM`/`MAILER_FROM_NAME` and, when `BREVO_API_KEY` is set, switch the
+  adapter to Swoosh's Brevo one with Req as the API client.
+- **Delivery is queued, never inline.** `enqueue_incident_notifications/3` — called
+  from `PulseOps.Incidents` after an incident opens or resolves — queues one
+  `NotifyJob` per enabled notifier. Each notifier gets its own job and retry
+  budget (`max_attempts: 5`), so a slow or down receiver never blocks the monitor.
+- `NotifyJob` is deliberately quiet when a notifier or incident is gone by the
+  time it runs (deleted, or paused): no error is logged for a channel that no
+  longer exists.
+- `NotifierLive.Index` lists channels with Active/Paused pills and delete;
+  `NotifierLive.Form` switches the destination fields by type. Manage controls
+  are gated behind `:manage_organization`, like alert rules. Both are reached from
+  a "Notifications" card on the organization settings page.
+- In tests, webhook deliveries go through Req's test plug adapter
+  (`config :pulse_ops, webhook_client: :stub`) so nothing touches the network.
+
+**Verified by tests:** payload shape and bearer header, retry on HTTP 500,
+no-op on deleted/paused notifier or deleted incident, email subject/body/to, and
+enqueue-once-per-enabled-notifier for both open and resolve.
+
 ## Next steps — V2
 
 In rough order of what adds most:
 
-1. **Notifications**: Slack and generic webhooks first, email second.
+1. **Activity log** for auditability.
 2. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
    retention policy.
-3. **Activity log** for auditability.
 
 Then V3: clustering with leader election so several nodes do not duplicate checks,
 Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique

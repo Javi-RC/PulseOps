@@ -40,6 +40,22 @@ if config_env() == :dev do
     ]
 end
 
+if config_env() in [:dev, :prod] do
+  # Real email delivery for the incident notifier. When BREVO_API_KEY is set the
+  # mailer switches to Brevo (SendInBlue); otherwise development keeps the Local
+  # adapter whose inbox lives at /dev/mailbox. The from address must belong to a
+  # sender verified in the Brevo account.
+  if api_key = System.get_env("BREVO_API_KEY") do
+    config :swoosh, :api_client, Swoosh.ApiClient.Req
+
+    config :pulse_ops, PulseOps.Mailer,
+      adapter: Swoosh.Adapters.Brevo,
+      api_key: api_key,
+      from: System.get_env("MAILER_FROM", "contact@example.com"),
+      from_name: System.get_env("MAILER_FROM_NAME", "PulseOps")
+  end
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

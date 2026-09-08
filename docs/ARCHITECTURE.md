@@ -34,7 +34,7 @@ PulseOps.Application
 │   ├── Task.Supervisor                   (runs the HTTP requests)
 │   ├── MonitorSupervisor                 (DynamicSupervisor — one child per service)
 │   └── Bootstrapper                      (starts a monitor per enabled service at boot)
-├── Oban                                  (job queue — cron plugin runs nightly retention)
+├── Oban                                  (job queue — cron nightly retention, incident notification deliveries)
 └── PulseOpsWeb.Endpoint
 ```
 
@@ -79,6 +79,7 @@ restart. See ADR-002 for why the request is not made inline.
 ```
 organizations ──┬── organization_members ──── users
                 ├── alert_rules               (org default or per-service override)
+                ├── notifiers                 (webhook URL or email per organization)
                 └── services ──┬── service_checks
                                └── incidents ──── incident_events
 ```
@@ -96,6 +97,11 @@ organizations ──┬── organization_members ──── users
   `monitoring` → `resolved`), cause, started/resolved timestamps, resolver.
   A partial unique index enforces at most one unresolved incident per service (ADR-004).
 - `incident_events` — the timeline; `user_id` is null for automatic events.
+- `notifiers` — where an organization is told about incidents: a `:webhook` (URL +
+  optional bearer `secret_token`) or an `:email` (recipient), with `enabled` to
+  pause without deleting. When an incident opens or resolves,
+  `PulseOps.Notifications` queues one `NotifyJob` per enabled notifier; a slow
+  receiver never blocks the monitor.
 
 ## Tenancy
 
@@ -124,3 +130,8 @@ The HTTP client is a behaviour, `PulseOps.Monitoring.HealthCheck`, resolved thro
 application config. Tests swap in a Mox mock; development and production use
 `HealthCheck.Req`. A `/dev/flaky` endpoint whose response is toggled at runtime lets
 an incident be triggered on demand during a demo.
+
+Webhook deliveries share the same idea: `config :pulse_ops, webhook_client: :stub`
+routes them through a `Req.Test` plug in tests so nothing touches the network, while
+every other environment delivers over the wire. Email uses Swoosh's Test adapter in
+tests; `BREVO_API_KEY` at runtime switches production and development to Brevo.

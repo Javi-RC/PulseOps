@@ -62,11 +62,14 @@ config :phoenix_live_view,
 #
 # For production it's recommended to configure a different adapter
 # at the `config/runtime.exs`.
-config :pulse_ops, PulseOps.Mailer, adapter: Swoosh.Adapters.Local
+config :pulse_ops, PulseOps.Mailer,
+  adapter: Swoosh.Adapters.Local,
+  from: "contact@example.com",
+  from_name: "PulseOps"
 
-# Configure Oban, the job queue. Only housekeeping jobs run today — check
-# retention and expired token purge — alert rules and notifications will follow.
-# Tests disable the queues and drive jobs through `Oban.Testing`.
+# Configure Oban, the job queue. Housekeeping jobs (check retention, expired
+# token purge) and notification deliveries run on the default queue. Tests
+# disable the queues and drive jobs through `Oban.Testing`.
 config :pulse_ops, Oban,
   repo: PulseOps.Repo,
   queues: [default: 10],

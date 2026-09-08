@@ -87,6 +87,9 @@ defmodule PulseOpsWeb.Router do
       live "/orgs/:org/settings/alert-rules", AlertRuleLive.Index, :index
       live "/orgs/:org/settings/alert-rules/new", AlertRuleLive.Form, :new
       live "/orgs/:org/settings/alert-rules/:id/edit", AlertRuleLive.Form, :edit
+      live "/orgs/:org/settings/notifiers", NotifierLive.Index, :index
+      live "/orgs/:org/settings/notifiers/new", NotifierLive.Form, :new
+      live "/orgs/:org/settings/notifiers/:id/edit", NotifierLive.Form, :edit
     end
 
     post "/users/update-password", UserSessionController, :update_password

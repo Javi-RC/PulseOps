@@ -97,6 +97,23 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
           </.link>
         </div>
       </.card>
+      <.card class="mt-6 max-w-xl">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="font-medium">Notifications</p>
+            <p class="mt-0.5 text-sm text-base-content/50">
+              The webhook endpoints and email addresses that hear about incidents when they
+              open and resolve.
+            </p>
+          </div>
+          <.link
+            navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/notifiers"}
+            class="btn btn-soft btn-sm"
+          >
+            Manage notifiers
+          </.link>
+        </div>
+      </.card>
     </Layouts.app>
     """
   end
