@@ -243,7 +243,7 @@ Detailed implementation plan: [Phase 1 in detail](#phase-1-in-detail).
 
 Make the system survive realistic data and observe itself.
 
-- [ ] Metric rollups (hourly table + Oban job), rewrite `service_metrics/3` and
+- [x] Metric rollups (hourly table + Oban job), rewrite `service_metrics/3` and
       `uptime_by_service/2` to read them — the expensive half of F4
 - [ ] **F8** Consume the telemetry: Prometheus metrics, a `/metrics` endpoint,
       structured logging with `service_id`/`organization_id`, `Oban.Telemetry`

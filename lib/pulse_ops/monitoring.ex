@@ -10,6 +10,7 @@ defmodule PulseOps.Monitoring do
   alias PulseOps.Monitoring.Check
   alias PulseOps.Monitoring.HealthCheck.Result
   alias PulseOps.Monitoring.MonitorSupervisor
+  alias PulseOps.Monitoring.Rollup
   alias PulseOps.Monitoring.Service
   alias PulseOps.Organizations
   alias PulseOps.Repo
@@ -320,22 +321,88 @@ defmodule PulseOps.Monitoring do
   def service_metrics(%Scope{} = scope, %Service{} = service, opts \\ []) do
     true = service.organization_id == scope.organization.id
 
-    since = Keyword.get_lazy(opts, :since, fn -> hours_ago(24) end)
+    {since, cutover, live_from} = rollup_window(opts)
 
-    query =
-      from c in Check,
-        where: c.service_id == ^service.id and c.inserted_at >= ^since,
+    rolled =
+      from(r in Rollup,
+        where: r.service_id == ^service.id,
+        where: r.bucket_start >= ^since and r.bucket_start < ^cutover,
+        select: %{
+          total: sum(r.total),
+          up: sum(r.up),
+          down: sum(r.down),
+          latency_count: sum(r.latency_count),
+          latency_max: max(r.latency_max),
+          le_25: sum(r.latency_le_25),
+          le_50: sum(r.latency_le_50),
+          le_100: sum(r.latency_le_100),
+          le_250: sum(r.latency_le_250),
+          le_500: sum(r.latency_le_500),
+          le_1000: sum(r.latency_le_1000),
+          le_2500: sum(r.latency_le_2500),
+          le_5000: sum(r.latency_le_5000)
+        }
+      )
+      |> Repo.one()
+
+    live =
+      from(c in Check,
+        where: c.service_id == ^service.id and c.inserted_at >= ^live_from,
         select: %{
           total: count(c.id),
           up: fragment("count(*) FILTER (WHERE ? <> 'down')", c.status),
           down: fragment("count(*) FILTER (WHERE ? = 'down')", c.status),
-          p50: fragment("percentile_cont(0.5) WITHIN GROUP (ORDER BY ?)", c.response_time_ms),
-          p95: fragment("percentile_cont(0.95) WITHIN GROUP (ORDER BY ?)", c.response_time_ms),
-          p99: fragment("percentile_cont(0.99) WITHIN GROUP (ORDER BY ?)", c.response_time_ms)
+          latency_count: fragment("count(?)", c.response_time_ms),
+          latency_max: max(c.response_time_ms),
+          le_25: fragment("count(*) FILTER (WHERE ? <= 25)", c.response_time_ms),
+          le_50: fragment("count(*) FILTER (WHERE ? <= 50)", c.response_time_ms),
+          le_100: fragment("count(*) FILTER (WHERE ? <= 100)", c.response_time_ms),
+          le_250: fragment("count(*) FILTER (WHERE ? <= 250)", c.response_time_ms),
+          le_500: fragment("count(*) FILTER (WHERE ? <= 500)", c.response_time_ms),
+          le_1000: fragment("count(*) FILTER (WHERE ? <= 1000)", c.response_time_ms),
+          le_2500: fragment("count(*) FILTER (WHERE ? <= 2500)", c.response_time_ms),
+          le_5000: fragment("count(*) FILTER (WHERE ? <= 5000)", c.response_time_ms)
         }
+      )
+      |> Repo.one()
 
-    query |> Repo.one() |> to_metrics()
+    rolled |> merge_metric_rows(live) |> to_metrics()
   end
+
+  # Rollup sums come back nil when no hour matched, and the two halves are
+  # simply added: every count in a rollup, the histogram included, is additive.
+  # That is the property the histogram was chosen for.
+  defp merge_metric_rows(rolled, live) do
+    Map.new(
+      [
+        :total,
+        :up,
+        :down,
+        :latency_count,
+        :le_25,
+        :le_50,
+        :le_100,
+        :le_250,
+        :le_500,
+        :le_1000,
+        :le_2500,
+        :le_5000
+      ],
+      fn key -> {key, value(rolled, key) + value(live, key)} end
+    )
+    |> Map.put(
+      :latency_max,
+      max_of(value(rolled, :latency_max, nil), value(live, :latency_max, nil))
+    )
+  end
+
+  defp value(row, key), do: value(row, key, 0)
+  defp value(nil, _key, default), do: default
+  defp value(row, key, default), do: Map.get(row, key) || default
+
+  defp max_of(nil, other), do: other
+  defp max_of(one, nil), do: one
+  defp max_of(one, other), do: max(one, other)
 
   @doc """
   The most recent checks for every service in the organization, oldest first,
@@ -375,19 +442,44 @@ defmodule PulseOps.Monitoring do
   One query rather than one per service, so the dashboard does not fan out.
   """
   def uptime_by_service(%Scope{} = scope, opts \\ []) do
-    since = Keyword.get_lazy(opts, :since, fn -> hours_ago(24) end)
+    {since, cutover, live_from} = rollup_window(opts)
+    organization_id = scope.organization.id
 
-    from(c in Check,
-      join: s in Service,
-      on: s.id == c.service_id,
-      where: s.organization_id == ^scope.organization.id and c.inserted_at >= ^since,
-      group_by: c.service_id,
-      select:
-        {c.service_id,
-         fragment("count(*) FILTER (WHERE ? <> 'down')::float / count(*)::float", c.status)}
-    )
-    |> Repo.all()
-    |> Map.new(fn {service_id, ratio} -> {service_id, ratio * 100} end)
+    rolled =
+      from(r in Rollup,
+        join: s in Service,
+        on: s.id == r.service_id,
+        where: s.organization_id == ^organization_id,
+        where: r.bucket_start >= ^since and r.bucket_start < ^cutover,
+        group_by: r.service_id,
+        select: {r.service_id, %{total: sum(r.total), up: sum(r.up)}}
+      )
+      |> Repo.all()
+      |> Map.new()
+
+    live =
+      from(c in Check,
+        join: s in Service,
+        on: s.id == c.service_id,
+        where: s.organization_id == ^organization_id,
+        where: c.inserted_at >= ^live_from,
+        group_by: c.service_id,
+        select:
+          {c.service_id,
+           %{
+             total: count(c.id),
+             up: fragment("count(*) FILTER (WHERE ? <> 'down')", c.status)
+           }}
+      )
+      |> Repo.all()
+      |> Map.new()
+
+    rolled
+    |> Map.merge(live, fn _service_id, a, b ->
+      %{total: a.total + b.total, up: a.up + b.up}
+    end)
+    |> Map.reject(fn {_service_id, %{total: total}} -> total == 0 end)
+    |> Map.new(fn {service_id, %{total: total, up: up}} -> {service_id, up / total * 100} end)
   end
 
   ## Alert rules
@@ -531,18 +623,20 @@ defmodule PulseOps.Monitoring do
     |> AlertRule.for_monitoring()
   end
 
-  defp to_metrics(nil), do: empty_metrics()
   defp to_metrics(%{total: 0}), do: empty_metrics()
 
   defp to_metrics(row) do
+    histogram = Map.new(Rollup.bounds(), fn bound -> {bound, Map.fetch!(row, :"le_#{bound}")} end)
+    count = row.latency_count
+
     %{
       total: row.total,
       up: row.up,
       down: row.down,
       uptime_percent: row.up / row.total * 100,
-      p50: round_ms(row.p50),
-      p95: round_ms(row.p95),
-      p99: round_ms(row.p99)
+      p50: Rollup.percentile(histogram, count, 0.5, row.latency_max),
+      p95: Rollup.percentile(histogram, count, 0.95, row.latency_max),
+      p99: Rollup.percentile(histogram, count, 0.99, row.latency_max)
     }
   end
 
@@ -550,8 +644,100 @@ defmodule PulseOps.Monitoring do
     %{total: 0, up: 0, down: 0, uptime_percent: nil, p50: nil, p95: nil, p99: nil}
   end
 
-  defp round_ms(nil), do: nil
-  defp round_ms(value), do: round(value)
+  @doc """
+  Builds, or rebuilds, the rollup rows for the hour containing `datetime`.
+
+  Recomputes the hour from the raw checks and upserts, rather than adding to
+  whatever is already there, so running it twice is harmless and a backfill and
+  a scheduled run cannot double-count.
+  """
+  @spec roll_up_hour(DateTime.t()) :: non_neg_integer()
+  def roll_up_hour(%DateTime{} = datetime) do
+    bucket_start = truncate_hour(datetime)
+    bucket_end = DateTime.add(bucket_start, 3600, :second)
+    now = DateTime.utc_now(:second)
+
+    rows =
+      from(c in Check,
+        where: c.inserted_at >= ^bucket_start and c.inserted_at < ^bucket_end,
+        group_by: c.service_id,
+        select: %{
+          service_id: c.service_id,
+          total: count(c.id),
+          up: fragment("count(*) FILTER (WHERE ? <> 'down')", c.status),
+          degraded: fragment("count(*) FILTER (WHERE ? = 'degraded')", c.status),
+          down: fragment("count(*) FILTER (WHERE ? = 'down')", c.status),
+          latency_count: fragment("count(?)", c.response_time_ms),
+          latency_sum: fragment("coalesce(sum(?), 0)", c.response_time_ms),
+          latency_max: max(c.response_time_ms),
+          latency_le_25: fragment("count(*) FILTER (WHERE ? <= 25)", c.response_time_ms),
+          latency_le_50: fragment("count(*) FILTER (WHERE ? <= 50)", c.response_time_ms),
+          latency_le_100: fragment("count(*) FILTER (WHERE ? <= 100)", c.response_time_ms),
+          latency_le_250: fragment("count(*) FILTER (WHERE ? <= 250)", c.response_time_ms),
+          latency_le_500: fragment("count(*) FILTER (WHERE ? <= 500)", c.response_time_ms),
+          latency_le_1000: fragment("count(*) FILTER (WHERE ? <= 1000)", c.response_time_ms),
+          latency_le_2500: fragment("count(*) FILTER (WHERE ? <= 2500)", c.response_time_ms),
+          latency_le_5000: fragment("count(*) FILTER (WHERE ? <= 5000)", c.response_time_ms)
+        }
+      )
+      |> Repo.all()
+      |> Enum.map(fn row ->
+        row
+        |> Map.put(:bucket_start, bucket_start)
+        |> Map.put(:inserted_at, now)
+        |> Map.put(:updated_at, now)
+      end)
+
+    case rows do
+      [] ->
+        0
+
+      rows ->
+        {count, _} =
+          Repo.insert_all(Rollup, rows,
+            on_conflict: {:replace, Rollup.counter_fields() ++ [:latency_max, :updated_at]},
+            conflict_target: [:service_id, :bucket_start]
+          )
+
+        count
+    end
+  end
+
+  @doc """
+  Rolls up every hour from `hours` ago up to the last complete one.
+
+  Used to backfill after the rollup table is introduced, and to catch up if the
+  scheduled job did not run.
+  """
+  @spec backfill_rollups(pos_integer()) :: non_neg_integer()
+  def backfill_rollups(hours) when is_integer(hours) and hours > 0 do
+    latest = truncate_hour(DateTime.utc_now())
+
+    Enum.reduce(1..hours, 0, fn ago, acc ->
+      acc + roll_up_hour(DateTime.add(latest, -ago * 3600, :second))
+    end)
+  end
+
+  defp truncate_hour(%DateTime{} = datetime) do
+    datetime
+    |> DateTime.truncate(:second)
+    |> Map.merge(%{minute: 0, second: 0, microsecond: {0, 0}})
+  end
+
+  # Rollups cover complete hours only, so the current hour is still read from
+  # raw checks and the two are added together. `since` is aligned down to the
+  # hour, which can widen the window by up to an hour — a "last 24 hours" figure
+  # starts at the top of that hour rather than at an arbitrary minute.
+  defp rollup_window(opts) do
+    requested = Keyword.get_lazy(opts, :since, fn -> hours_ago(24) end)
+    cutover = truncate_hour(DateTime.utc_now())
+    aligned = truncate_hour(requested)
+
+    live_from =
+      if DateTime.compare(requested, cutover) == :gt, do: requested, else: cutover
+
+    {aligned, cutover, live_from}
+  end
 
   defp hours_ago(hours), do: DateTime.add(DateTime.utc_now(), -hours * 3600, :second)
 end

@@ -150,6 +150,67 @@ string, so no migration was needed.
 
 ---
 
+## ADR-010 — Metrics come from hourly rollups, and latency is a histogram
+
+**Decision.** `service_check_rollups` holds one row per service per hour, built
+by an hourly Oban job that recomputes and upserts rather than appending.
+`uptime_by_service/2` and `service_metrics/3` read rollups for every complete
+hour and raw `service_checks` for the current, still-filling one, and add the
+two together. `since` is aligned down to the hour.
+
+Latency is stored as a **cumulative histogram** — `latency_le_100` is the number
+of checks in that hour answering in 100 ms or less — plus a count, a sum and a
+maximum. Percentiles are interpolated out of the merged histogram.
+
+**Why rollups.** `service_checks` grows at `86,400 / interval` rows per service
+per day; 100 services at 30 s is about 29M rows a month. Both figures on the
+dashboard aggregated over those raw rows, so the cost of opening a page scaled
+with the *retention window* — a configuration value. Someone lengthening
+retention to keep more history would have made the dashboard slower with no
+obvious connection between the two. Against the development database this
+replaced 17,247 raw rows with 142 rollup rows for the same numbers.
+
+**Why a histogram and not three percentile columns.** Counts merge across hours
+by addition, so uptime over a day is exact from 24 rollup rows. Percentiles do
+not merge. The p95 of a day is neither the average of 24 hourly p95s nor the p95
+of them, and there is no way to recover it from them. Storing hourly percentiles
+would have produced a number that looks authoritative and is wrong by an amount
+nobody can bound.
+
+A cumulative histogram does merge by addition, because each bucket is a count.
+Summing `latency_le_100` across 24 rows gives the true number of sub-100 ms
+checks in the day, and a percentile interpolated from the merged buckets is
+wrong by at most the width of the bucket it lands in. That is the trade actually
+being made: **bounded error instead of unbounded error**, in exchange for eight
+integer columns.
+
+**Rejected.** *Hourly p50/p95/p99 columns.* Simpler, and quietly wrong — the
+failure mode is a plausible number, which is worse than an obviously missing one.
+
+*t-digest or a similar sketch.* Mergeable and far more accurate in the tail, and
+a great deal of machinery to maintain for a health-check response time where
+bucket-width error is already well inside what anyone acts on.
+
+*Rolling up the current hour too.* The row would be stale the moment the next
+probe landed, and reads would have to correct for it anyway. Reading the current
+hour from raw checks costs one bounded query — an hour of one service is at most
+360 rows at the minimum interval.
+
+*Dropping raw checks once rolled up.* The chart on the service page plots
+individual probes, and an incident's cause is often a single slow response.
+Retention already handles that, separately and on its own schedule.
+
+**Consequence.** Aligning `since` down to the hour means a "last 24 hours"
+figure covers from the top of that hour, so up to 25 hours. The alternative was
+a third query for the partial leading hour, which is a lot of machinery for a
+window whose edge nobody reads to the minute.
+
+A new installation needs its history rolled up once, which
+`backfill_service_check_rollups` does in one SQL statement at migration time.
+Without it, every finished hour would simply be missing from the dashboard.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

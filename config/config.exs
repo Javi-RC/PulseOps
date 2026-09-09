@@ -82,7 +82,10 @@ config :pulse_ops, Oban,
     {Oban.Plugins.Cron,
      crontab: [
        {"@daily", PulseOps.Monitoring.RetentionJob},
-       {"@daily", PulseOps.Accounts.PurgeExpiredTokensJob}
+       {"@daily", PulseOps.Accounts.PurgeExpiredTokensJob},
+       # A few minutes past the hour, so the hour it rolls up is finished and
+       # no checks are still landing in it.
+       {"5 * * * *", PulseOps.Monitoring.RollupJob}
      ]}
   ]
 

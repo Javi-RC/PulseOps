@@ -34,7 +34,7 @@ PulseOps.Application
 │   ├── Task.Supervisor                   (runs the HTTP requests)
 │   ├── MonitorSupervisor                 (DynamicSupervisor — one child per service)
 │   └── Bootstrapper                      (starts a monitor per enabled service at boot)
-├── Oban                                  (job queue — cron nightly retention, incident notification deliveries)
+├── Oban                                  (job queue — cron hourly rollups and nightly retention, incident notification deliveries)
 └── PulseOpsWeb.Endpoint
 ```
 
@@ -86,7 +86,7 @@ restart. See ADR-002 for why the request is not made inline.
 organizations ──┬── organization_members ──── users
                 ├── alert_rules               (org default or per-service override)
                 ├── notifiers                 (webhook URL or email per organization)
-                └── services ──┬── service_checks
+                └── services ──┬── service_checks ──── service_check_rollups
                                └── incidents ──── incident_events
 ```
 
@@ -105,7 +105,13 @@ organizations ──┬── organization_members ──── users
   `(service_id, inserted_at)`, which serves every read — they are all "the latest
   checks for one service" — and separately on `(inserted_at)`, which the nightly
   retention delete needs and a composite index cannot provide. That delete runs
-  in bounded batches. Rollups are still Phase 2 work.
+  in bounded batches.
+- `service_check_rollups` — one row per service per hour: status counts plus a
+  cumulative latency histogram. The dashboard and the service metrics read these
+  for every complete hour and only the current hour from raw checks, so the cost
+  of a page is bounded by hours rather than by probe frequency or by the
+  retention window. Counts merge by addition; the histogram is what makes
+  percentiles merge too. See ADR-010.
 - `incidents` — severity, status (`open` → `investigating` → `identified` →
   `monitoring` → `resolved`), cause, started/resolved timestamps, resolver.
   A partial unique index enforces at most one unresolved incident per service

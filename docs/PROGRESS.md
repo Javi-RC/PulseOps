@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `feature/incident-notifications` |
-| Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
-| Next | Repo housekeeping, then Phase 2 of [`ROADMAP.md`](ROADMAP.md) |
-| Checks | `mix check` green: 425 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) — scale and visibility |
+| Next | F8 — consume the telemetry that is emitted and heard by nobody |
+| Checks | `mix check` green: 444 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -474,6 +474,38 @@ document, so a stale one is worse than none. Corrected:
 - `incidents` documents the reopen grace and that a reopened outage is a new row.
 - A new **Outbound requests** section covers `UrlGuard` and why it runs twice.
 - The PubSub section says the dashboard coalesces its re-reads.
+
+
+### Phase 2 — Metric rollups (the expensive half of F4)
+
+- `service_checks` grows at `86,400 / interval` rows per service per day, and
+  both `uptime_by_service/2` and `service_metrics/3` aggregated over those raw
+  rows. The cost of opening the dashboard therefore scaled with the **retention
+  window**, which is a config value — lengthening it to keep more history would
+  have quietly made every page slower.
+- `service_check_rollups`: one row per service per hour, built by
+  `RollupJob` on a `5 * * * *` cron so the hour it aggregates is finished.
+  `roll_up_hour/1` **recomputes and upserts**, so a retry, a backfill overlapping
+  a scheduled run, or the same hour rolled twice all converge instead of
+  double-counting.
+- Reads take complete hours from rollups and the current, still-filling hour from
+  raw checks, then add them. `since` is aligned down to the hour, so a "last 24
+  hours" figure covers from the top of that hour.
+- **Latency is a cumulative histogram, not three percentile columns.** Counts
+  merge across hours by addition; percentiles do not — the p95 of a day is not
+  the average of 24 hourly p95s and cannot be recovered from them. Hourly
+  percentile columns would have produced a plausible, unboundedly wrong number.
+  A histogram merges by addition and its error is bounded by the bucket width.
+  See **ADR-010**.
+- `backfill_service_check_rollups` populates history in one SQL statement at
+  migration time. Without it an existing installation would show an empty rollup
+  table and the dashboard's uptime would silently narrow to the current hour.
+
+**Verified against the development database**, not only by tests:
+`priv/scenarios/rollup_consistency.exs` compared the summed rollups with the raw
+aggregation over the same finished hours — **17,247 raw checks across 9 services
+reduced to 142 rollup rows, agreeing exactly** on totals, up counts, latency
+counts and histogram buckets.
 
 
 ## Next steps
