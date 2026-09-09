@@ -59,4 +59,9 @@ config :pulse_ops, health_check_client: PulseOps.Monitoring.HealthCheckMock
 config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual
 
 # Route every webhook delivery through the Req.Test stub so nothing touches the network.
+# No grace period on reopening: tests drive probes explicitly, so waiting out a
+# real window would only make them slow and timing-dependent. The suppression
+# behaviour itself is covered by a test that sets its own window.
+config :pulse_ops, :incident_reopen_grace_seconds, 0
+
 config :pulse_ops, webhook_client: :stub

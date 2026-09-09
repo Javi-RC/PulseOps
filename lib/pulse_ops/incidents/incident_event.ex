@@ -13,7 +13,7 @@ defmodule PulseOps.Incidents.IncidentEvent do
   alias PulseOps.Accounts.User
   alias PulseOps.Incidents.Incident
 
-  @types [:detected, :opened, :status_changed, :note, :resolved, :recovered]
+  @types [:detected, :opened, :reopened, :status_changed, :note, :resolved, :recovered]
 
   @type t :: %__MODULE__{}
 

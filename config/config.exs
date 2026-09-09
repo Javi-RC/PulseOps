@@ -90,6 +90,12 @@ config :pulse_ops, Oban,
 # rows — anything older is deleted nightly by `PulseOps.Monitoring.RetentionJob`.
 config :pulse_ops, :retention, checks_retention_days: 30
 
+# How long a manual resolution suppresses reconciliation. Closing an incident by
+# hand on a service that has not recovered means "snooze this outage", so the
+# monitor waits this long before reopening it (see ADR-009). A real transition
+# back to :down is never suppressed — only the reconciliation path is.
+config :pulse_ops, :incident_reopen_grace_seconds, 300
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

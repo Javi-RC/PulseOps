@@ -105,23 +105,14 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
   # Incidents are opened on a status *transition*, so a restart while a service
   # is already down would otherwise leave it with no incident at all: the monitor
-  # starts in :down, never transitions, and nothing fires. Reconciling once at
-  # startup keeps the invariant "a down service has an open incident" true across
-  # restarts and crashes.
+  # starts in :down, never transitions, and nothing fires. Reconciling at startup
+  # keeps the invariant "a down service has an open incident" true across
+  # restarts and crashes; reconciling again after every probe keeps it true while
+  # the monitor runs, which boot-only reconciliation did not (ADR-009).
   @impl true
   def handle_continue(:reconcile_incident, state) do
     state = %{state | rule: Monitoring.rule_for_monitoring(state.service)}
-
-    case state.status do
-      :down ->
-        Incidents.open_incident(state.service, state.rule, nil)
-
-      status when status in [:healthy, :degraded] ->
-        Incidents.resolve_open_incident(state.service)
-
-      :unknown ->
-        :ok
-    end
+    Incidents.reconcile_incident(state.service, state.status, state.rule)
 
     {:noreply, state}
   end
@@ -243,6 +234,11 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     case Monitoring.record_check(state.service, check_status, result) do
       {:ok, _check} ->
         if next_status == state.status do
+          # No transition to hang the incident hook on, so this is the only
+          # chance to notice that the incident state no longer matches reality —
+          # most importantly a service still down whose incident somebody
+          # resolved by hand (ADR-009).
+          Incidents.reconcile_incident(state.service, state.status, state.rule)
           {:ok, state}
         else
           {:ok, transition(state, next_status, result)}

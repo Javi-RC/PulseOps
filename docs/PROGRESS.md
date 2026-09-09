@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `feature/incident-notifications` |
-| Phase | 11 in progress — incident notifications (webhook + email) |
-| Next | V2 — activity log, metric rollups |
-| Checks | `mix check` green: 366 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
+| Next | F2 — partial unique index for the organization-default alert rule |
+| Checks | `mix check` green: 406 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -285,17 +285,62 @@ per-assignee delivery, enqueue-once per matching notifier for both open and
 resolve, service narrowing (a notifier for another service does not fire), and
 cross-organization service rejection.
 
-## Next steps — V2
+### Stabilisation — F1: continuous incident reconciliation
 
-In rough order of what adds most:
+First of the five P0 defects from [`ROADMAP.md`](ROADMAP.md).
 
-1. **Activity log** for auditability.
-2. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
-   retention policy.
+- **The bug, confirmed by a failing test before anything was changed.** Incidents
+  open on a status *transition*, and a service already at `:down` never
+  transitions again. So resolving an incident by hand while the service was still
+  broken left the outage running with no incident and no further notifications,
+  and it did not heal until the monitor restarted — in production, a redeploy.
+  ADR-008's reconciliation ran only in `handle_continue/2` at boot.
+- `Incidents.reconcile_incident/3` is the new monitor-facing entry point: it reads
+  the current incident state and acts only where it diverges from the status just
+  observed. `ServiceMonitor` calls it after every probe that produced no
+  transition, and `handle_continue(:reconcile_incident)` now delegates to it
+  instead of open-coding the same cases.
+- **A manual resolve is a snooze, not a fix.** Reopening is suppressed for
+  `:incident_reopen_grace_seconds` after a person resolves an incident on a
+  service that has not recovered — `resolved_by_id` is what tells a human's
+  resolution from the monitor's. 300 s in production, 0 in the suite so probes
+  stay deterministic.
+- **The grace period applies to reconciliation only.** A genuine transition back
+  to `:down` always opens an incident. A flat window would have swallowed a real
+  new outage that started inside it.
+- Reopening inserts a **new** incident whose first timeline event is typed
+  `:reopened`, so the timeline does not claim the monitor detected something it
+  had already reported. The resolved row and the person who closed it are left
+  intact. `incident_events.type` is a string column, so no migration was needed.
+- See **ADR-009**, which extends ADR-008 from "reconcile at boot" to "reconcile
+  continuously" and records why a reconciling *read* is not the failing *insert*
+  ADR-008 rejected.
 
-Then V3: clustering with leader election so several nodes do not duplicate checks,
-Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique
-index (ADR-004) is already what makes the clustering step safe.
+**Verified by tests:** the anchor regression (down → resolved by hand → next
+failing probe opens a new incident) plus the timeline event, suppression inside
+the grace window, a recovery during the window leaving the manual resolution
+standing, and a real recover-then-break-again cycle not being suppressed.
+
+
+## Next steps
+
+**See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
+found nine defects that are not recorded in this file, five of them P0, so the
+next work is stabilisation rather than new features:
+
+1. ~~A manually resolved incident never reopens while the service is still down~~
+   — fixed, see the F1 section above and ADR-009.
+2. Several organization-default alert rules can exist (Postgres NULLs are
+   distinct, so the unique index does not hold).
+3. `AlertRule` does not validate that `service_id` belongs to the tenant.
+4. The dashboard reloads four queries on every broadcast, one of them
+   aggregating 24 h of raw checks.
+5. Service and webhook URLs allow SSRF into the internal network.
+
+Metric rollups (the original V2 item) are Phase 2 there, together with
+observability and hot rule propagation. Activity log, clustering with leader
+election, and Prometheus/OpenTelemetry export remain later phases. The partial
+unique index (ADR-004) is already what makes the clustering step safe.
 
 ## Traps already hit
 

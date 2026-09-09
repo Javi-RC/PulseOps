@@ -229,7 +229,7 @@ Ordered by dependency and risk, not by ease.
 Make what already exists correct and defensible. F1–F5 are independent of each
 other, so this order is purely decreasing risk; each is its own commit.
 
-- [ ] **F1** Periodic incident reconciliation
+- [x] **F1** Periodic incident reconciliation
 - [ ] **F2** Partial unique index for the organization-default rule
 - [ ] **F3** Validate `service_id` tenancy in `AlertRule`
 - [ ] **F4** Dashboard debounce (the cheap half of F4)

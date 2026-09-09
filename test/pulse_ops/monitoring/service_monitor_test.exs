@@ -261,6 +261,134 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
       assert length(Incidents.list_active_incidents(scope)) == 1
     end
 
+    test "reopens after a person resolves the incident while the service is still down", %{
+      scope: scope,
+      service: service
+    } do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      assert [incident] = Incidents.list_active_incidents(scope)
+
+      # Somebody closes the incident by hand, but the service has not recovered:
+      # the monitor is still sitting in :down and will never transition again.
+      {:ok, resolved} = Incidents.resolve_incident(scope, incident)
+      assert resolved.resolved_by_id == scope.user.id
+      assert Incidents.list_active_incidents(scope) == []
+
+      probe(service)
+
+      assert [reopened] = Incidents.list_active_incidents(scope),
+             "a service still down must not be left without an incident (ADR-008)"
+
+      assert reopened.id != incident.id
+    end
+
+    test "records the reopening on the timeline rather than pretending it detected it", %{
+      scope: scope,
+      service: service
+    } do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      probe(service)
+
+      [reopened] = Incidents.list_active_incidents(scope)
+      assert %{events: [event]} = Incidents.get_incident!(scope, reopened.id)
+      assert event.type == :reopened
+      assert event.description =~ "still down"
+      # Written by the monitor, so nobody is credited with it.
+      assert event.user_id == nil
+    end
+
+    test "a manual resolve holds for the grace period before anything reopens", %{
+      scope: scope,
+      service: service
+    } do
+      # The suite runs with no grace so probes stay deterministic; this is the
+      # one test that exercises a real window.
+      Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
+      on_exit(fn -> Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 0) end)
+
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      probe(service)
+      probe(service)
+
+      assert Incidents.list_active_incidents(scope) == [],
+             "resolving by hand means snooze; reopening immediately would undo the person's action"
+    end
+
+    test "recovering during the grace period leaves the manual resolution standing", %{
+      scope: scope,
+      service: service
+    } do
+      Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
+      on_exit(fn -> Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 0) end)
+
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      stub_result(&healthy/0)
+      probe(service)
+      probe(service)
+
+      assert ServiceMonitor.status(service.id).status == :healthy
+      assert Incidents.list_active_incidents(scope) == []
+      # The manual resolution stands: no second incident was opened and closed
+      # behind the person's back.
+      assert length(Incidents.list_incidents(scope)) == 1
+    end
+
+    test "a real transition back to down is never suppressed by the grace period", %{
+      scope: scope,
+      service: service
+    } do
+      Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
+      on_exit(fn -> Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 0) end)
+
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      # The service genuinely recovers, then genuinely breaks again. That is a
+      # new outage, not the one the person snoozed.
+      stub_result(&healthy/0)
+      probe(service)
+      probe(service)
+      assert ServiceMonitor.status(service.id).status == :healthy
+
+      stub_result(&down/0)
+      probe(service)
+      probe(service)
+      probe(service)
+
+      assert [reopened] = Incidents.list_active_incidents(scope)
+      assert reopened.id != incident.id
+    end
+
     test "resolves it when the service recovers", %{scope: scope, service: service} do
       stub_result(&down/0)
       start_monitor(service)
