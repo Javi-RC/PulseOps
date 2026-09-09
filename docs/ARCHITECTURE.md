@@ -195,6 +195,24 @@ briefly and coalesces everything arriving inside the window into one reload,
 because its summary costs four queries and a flapping service would otherwise pay
 for all of them per viewer, per change.
 
+## Deployment shape
+
+The production image is a `mix release` on a runtime carrying no Mix, no build
+tools and no source, running as a non-root user. `bin/migrate` and `bin/server`
+are separate entry points on purpose: a container that migrates as it boots
+races every other replica starting at the same moment.
+
+`PHX_HOST` is mandatory and the release refuses to boot without it — it is in
+every generated link, and a wrong one fails silently rather than loudly.
+`force_ssl` redirects and sets HSTS, trusting `x-forwarded-proto`, so TLS is
+terminated by whatever sits in front.
+
+**PulseOps runs on one node.** `Bootstrapper` starts a monitor for every enabled
+service on *each* node, so a second replica duplicates probes, checks and
+notifications. The partial unique index (ADR-004) keeps incidents from being
+duplicated and protects nothing else. Leader election or partitioning by
+`service_id` has to exist before scaling by replicas.
+
 ## Testing seams
 
 The HTTP client is a behaviour, `PulseOps.Monitoring.HealthCheck`, resolved through

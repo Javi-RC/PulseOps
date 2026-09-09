@@ -264,7 +264,7 @@ Turn the engine into something other people interact with.
 - [ ] JSON API + organization tokens
 - [ ] Configurable checks: HTTP method, headers, expected status, body assertion
 - [ ] Email invitations for people who are not registered yet
-- [ ] **F9** Real deploy: production Dockerfile, `force_ssl`, mandatory
+- [x] **F9** Real deploy: production Dockerfile, `force_ssl`, mandatory
       `PHX_HOST`, secrets
 
 ### Phase 4 — Operational reliability and polish

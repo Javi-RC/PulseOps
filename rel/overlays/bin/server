@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+# Starts the release with the endpoint actually listening. Without PHX_SERVER
+# the release boots, runs, and serves nothing — the single most confusing way
+# for a deployment to look healthy and answer no requests.
+cd -P -- "$(dirname -- "$0")"
+PHX_SERVER=true exec ./pulse_ops start

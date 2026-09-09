@@ -41,6 +41,46 @@ Start here, in this order:
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
 4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
 
+## Deploying it
+
+`Dockerfile` builds a production image: a `mix release` on a runtime that has no
+Mix, no build tools and no source in it, running as a non-root user.
+
+```bash
+docker build -t pulseops:latest .
+
+# Migrations are their own step. A container that migrates on boot races every
+# other replica starting at the same moment.
+docker run --rm --env-file prod.env pulseops:latest /app/bin/migrate
+docker run -d -p 4000:4000 --env-file prod.env pulseops:latest
+```
+
+Required environment:
+
+| | |
+|---|---|
+| `SECRET_KEY_BASE` | signs cookies and tokens; `mix phx.gen.secret` |
+| `DATABASE_URL` | `ecto://user:pass@host/database` |
+| `PHX_HOST` | the hostname this installation answers at |
+
+`PHX_HOST` has **no default**. It ends up in every link PulseOps generates —
+magic-link logins, and the incident URLs in webhook and email notifications — so
+a wrong one produces links that silently go nowhere. The release refuses to boot
+without it.
+
+Optional: `PORT` (4000), `POOL_SIZE` (10), `DATABASE_SSL` (`true`; set `false`
+only for a database on a private network that does not speak TLS),
+`METRICS_TOKEN`, `BREVO_API_KEY` with `MAILER_FROM` and `MAILER_FROM_NAME`,
+`DNS_CLUSTER_QUERY`, `ECTO_IPV6`.
+
+HTTP is redirected to HTTPS with HSTS, trusting `x-forwarded-proto`, so put it
+behind a proxy or load balancer that terminates TLS.
+
+**One node only.** Every node starts a monitor for every enabled service, so a
+second replica duplicates probes, checks and notifications. The partial unique
+index keeps incidents from being duplicated and protects nothing else. Do not
+scale by replicas until there is leader election.
+
 ## Public status page
 
 An organization can publish a page at `/status/:slug` that anyone can read

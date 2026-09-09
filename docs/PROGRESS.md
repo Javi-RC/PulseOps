@@ -7,9 +7,9 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/public-status-page` |
+| Branch | `feature/status-page-and-deploy` |
 | Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) in progress — product surface |
-| Next | F9 — production image, `force_ssl`, mandatory `PHX_HOST` |
+| Next | Configurable checks, or the JSON API — both Phase 3 |
 | Checks | `mix check` green: 501 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
@@ -647,6 +647,36 @@ and the held-back one absent, and neither the service URL, its hostname, a membe
 email, nor the incident cause anywhere in the HTML.
 
 
+### Phase 3 — F9: deployable for real
+
+- **`Dockerfile`** (production) beside the existing `Dockerfile.dev`: a two-stage
+  `mix release` shipped on a runtime with no Mix, no build tools and no source,
+  running as a non-root user. 296 MB.
+- **`PHX_HOST` is mandatory.** It defaulted to `"example.com"`, which booted
+  happily and put a hostname nobody owns into every generated link — magic-link
+  logins, and the incident URLs in webhook and email notifications. The release
+  now refuses to boot without it, with a message saying what it is for.
+- **`bin/migrate` and `bin/server` are separate entry points.** Migrating on
+  boot races every other replica starting at the same moment. `PulseOps.Release`
+  is the eval target, because `mix ecto.migrate` does not exist in a release.
+- `DATABASE_SSL` defaults to **true** with `verify_peer` against the OS CA
+  bundle; `false` is the deliberate opt-out for a database on a private network.
+- **`force_ssl` was already enabled** in `config/prod.exs` — the roadmap's F9
+  claim that it was still commented out is wrong. What is commented out is the
+  explanatory block in `runtime.exs`. Verified in the running image: HTTP gets a
+  301 to HTTPS and served responses carry HSTS.
+- The **one-node deployment constraint** is now written down in
+  `ARCHITECTURE.md` and the README, which the roadmap asked for explicitly:
+  every node starts a monitor for every service, so a second replica duplicates
+  probes, checks and notifications.
+
+**Verified by building and running the image**, which is the only way any of
+this can be verified: migrations applied to a fresh database from the release,
+the server booted, HTTP redirected to HTTPS, HSTS present, `/metrics` 401 then
+200 with its token, assets served digested and gzipped, `whoami` is `pulseops`,
+and `mix` is absent from the image.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -739,6 +769,17 @@ unique index (ADR-004) is already what makes the clustering step safe.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
+- **A release ships the builder's ERTS, so the two Docker stages must agree on
+  their Debian.** Building on `elixir:1.20-otp-28` (trixie, glibc 2.41) and
+  running on `debian:bookworm-slim` (glibc 2.36) produced an image that built
+  cleanly and died on boot with `libm.so.6: version GLIBC_2.38 not found`. The
+  Dockerfile comment warned about exactly this and the first version did it
+  anyway — which is why the image is booted as part of the check, not assumed.
+- **`rel/overlays` only reaches the release if `rel/` is in the build context.**
+  Without `COPY rel rel` the image builds fine and `bin/server` and
+  `bin/migrate` simply are not in it.
+- **Git Bash rewrites container paths.** `docker run ... /app/bin/migrate`
+  becomes `C:/Program Files/Git/app/bin/migrate`. `MSYS_NO_PATHCONV=1` stops it.
 - **`mix run` starts the endpoint but does not listen.** Only `mix phx.server` or
   `PHX_SERVER=true` makes it serve. A scenario script probing the app's own
   `/dev/flaky` under plain `mix run` gets "connection refused" on every probe,
