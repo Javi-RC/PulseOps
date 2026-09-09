@@ -7,7 +7,7 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/status-page-and-deploy` |
+| Branch | `feature/product-surface` |
 | Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) complete — product surface |
 | Next | Phase 4 of [`ROADMAP.md`](ROADMAP.md) — operational reliability |
 | Checks | `mix check` green: 600 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
