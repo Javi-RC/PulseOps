@@ -319,6 +319,59 @@ existed. Another tenant's id answers 404 rather than 403, for the same reason.
 
 ---
 
+## ADR-013 — An invitation is a login that also grants a membership
+
+**Decision.** `add_member/3` could only add somebody who had already registered.
+Invitations cover the case it could not: an address with no account here. The
+link is emailed, stored only as a hash, single use, and expires in seven days.
+
+Accepting **creates the account if there is none, confirms it, adds the
+membership and signs the person in** — all in one transaction. The invitation
+page is public and only *offers* to accept; accepting is a `POST`.
+
+**Why accepting can create and sign in.** This application already treats
+control of a mailbox as proof of identity: that is exactly what the magic-link
+login is. An invitation link is delivered to one address and proves the same
+thing, so making the invited person register separately — and then log in, and
+then find the invitation again — would be three steps that prove nothing the
+first click had not already proved. Confirming the account on the spot follows
+for the same reason.
+
+**Why accepting is a POST.** A `GET` is followed by mail scanners, corporate
+link-rewriting proxies and browser prefetchers, none of which asked to join
+anything. A link that acted on being fetched would produce memberships nobody
+consented to, and would burn the invitation before its recipient ever saw it.
+The page offers; the form accepts. `phx.gen.auth` confirms accounts the same
+way, for the same reason.
+
+**Why one field does both.** The members page used to say "the person must
+already have a PulseOps account", which is a dead end at exactly the moment
+somebody is trying to bring a colleague in. It now adds whoever is already
+registered and invites whoever is not, which is what the README had been
+claiming all along.
+
+**Rejected.** *Making the invitee register first and then redeem.* More
+conventional, and it fails the most common case — the person clicks the link,
+finds a registration form, and has no idea the two are connected.
+
+*Storing the token in the clear.* There is no reason: it only has to be
+recognised, like the API tokens (ADR-012).
+
+*Letting an invitation be accepted by whoever is signed in.* An invitation is
+addressed to an address. Binding it to the email means a forwarded link cannot
+quietly add the wrong account.
+
+**Consequence.** An expired, accepted, withdrawn and unknown token all render
+the same page, because saying which would report whether an address had ever
+been invited. Re-inviting replaces the pending invitation rather than leaving
+two live links.
+
+Somebody added by hand between the invitation being sent and opened is not an
+error: the invitation is spent and they are let in with the membership they
+already have.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

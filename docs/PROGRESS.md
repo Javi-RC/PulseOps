@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `feature/status-page-and-deploy` |
-| Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) in progress — product surface |
-| Next | Email invitations for people who are not registered yet |
-| Checks | `mix check` green: 572 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) complete — product surface |
+| Next | Phase 4 of [`ROADMAP.md`](ROADMAP.md) — operational reliability |
+| Checks | `mix check` green: 600 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -747,6 +747,41 @@ real HTTP with a real token: 401 unauthenticated, 201 on create, 422 carrying
 the SSRF guard's own message, 404 for another tenant, resolve credited to the
 token's owner, 409 on a second resolve, a demoted owner's token reading but not
 writing, and 401 the moment it is revoked.
+
+
+### Phase 3 — email invitations
+
+- `add_member/3` could only add somebody already registered, and its own `@doc`
+  said so while the README promised "invite people". Invitations close that gap.
+- **One field does both.** The members page adds whoever already has an account
+  and invites whoever does not, which is what it should have done from the start
+  — the old copy said "the person must already have a PulseOps account", a dead
+  end at exactly the moment somebody is bringing a colleague in.
+- **Accepting creates the account, confirms it, adds the membership and signs
+  them in**, in one transaction. Holding the link proves control of the mailbox,
+  which is precisely what the magic-link login already accepts as proof — so
+  making the invitee register, log in, and find the invitation again would be
+  three steps proving nothing the first click had not. See **ADR-013**.
+- **Accepting is a POST, and this is the part that matters.** A `GET` is followed
+  by mail scanners, link-rewriting proxies and browser prefetchers, none of which
+  asked to join anything. The page offers; the form accepts. The scenario checks
+  exactly this: fetching the page creates no account.
+- Single use, expires in 7 days, stored only as a hash. Re-inviting replaces the
+  pending link rather than leaving two live ones.
+- **Expired, accepted, withdrawn and unknown tokens all render the same page**,
+  because saying which would report whether an address had ever been invited.
+- Somebody added by hand between the invitation being sent and opened is not an
+  error: the invitation is spent and they are let in with the membership they
+  already have.
+- The email goes through `PulseOps.Mailer`, not `Notifications.Mailer`: an
+  invitation is account correspondence, not an incident alert, and has to work
+  whether or not a tenant has configured a provider.
+
+**Verified against the running app** with `priv/scenarios/invitations.exs`, over
+real HTTP and driving the form the way a browser does, CSRF token and session
+cookie included: the page readable with no session, **fetching it creating no
+account**, the POST creating a confirmed account and a membership, and a second
+POST refused.
 
 
 ## Next steps

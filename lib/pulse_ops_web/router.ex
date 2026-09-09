@@ -130,7 +130,14 @@ defmodule PulseOpsWeb.Router do
     live_session :public_status_page,
       on_mount: [{PulseOpsWeb.UserAuth, :mount_current_scope}] do
       live "/status/:slug", StatusPageLive, :show
+
+      # Public because the person being invited may have no account yet. The
+      # page only offers to accept; accepting is the POST below, so a mail
+      # scanner following the link cannot join an organization on their behalf.
+      live "/invitations/:token", InvitationLive, :show
     end
+
+    post "/invitations/:token/accept", InvitationController, :accept
   end
 
   scope "/", PulseOpsWeb do

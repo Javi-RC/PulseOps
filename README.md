@@ -81,6 +81,13 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## Inviting people
+
+Adding somebody on the members page adds them straight away if they already have
+an account, and emails them an invitation if they do not. The link works once,
+lasts a week, and creates their account when they accept — so a colleague needs
+nothing but the email.
+
 ## JSON API
 
 Services and incidents are readable and writable over HTTP at `/api/v1`, with an

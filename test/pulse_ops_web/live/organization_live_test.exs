@@ -2,6 +2,7 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
   use PulseOpsWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
+  import Swoosh.TestAssertions
   import PulseOps.AccountsFixtures
   import PulseOps.OrganizationsFixtures
 
@@ -160,6 +161,14 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
     end
   end
 
+  defp drain_emails do
+    receive do
+      {:email, _email} -> drain_emails()
+    after
+      0 -> :ok
+    end
+  end
+
   describe "members" do
     test "lists the people in the organization", %{conn: conn, scope: scope, user: user} do
       colleague = user_fixture()
@@ -193,15 +202,45 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
       assert Organizations.get_membership(scope.organization, colleague).role == :member
     end
 
-    test "says so when the address has no account", %{conn: conn, scope: scope} do
+    test "invites an address that has no account yet", %{conn: conn, scope: scope} do
       {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/members")
+
+      # The login link the setup sent is still sitting in the mailbox.
+      drain_emails()
 
       html =
         live
         |> form("form[phx-submit=add]", member: %{email: "nobody@example.com", role: "member"})
         |> render_submit()
 
-      assert html =~ "No account is registered with that email address"
+      # One field does both: add whoever is already here, invite whoever is not.
+      assert html =~ "Invitation sent to nobody@example.com"
+      assert html =~ "Waiting to be accepted"
+
+      assert [invitation] = Organizations.list_pending_invitations(scope)
+      assert invitation.email == "nobody@example.com"
+      assert invitation.role == :member
+
+      assert_email_sent(fn email ->
+        assert email.to == [{"", "nobody@example.com"}]
+        assert email.subject =~ scope.organization.name
+        assert email.text_body =~ "/invitations/"
+      end)
+    end
+
+    test "withdrawing an invitation stops its link working", %{conn: conn, scope: scope} do
+      {:ok, _invitation, token} =
+        Organizations.invite_member(scope, "nobody@example.com", :member)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/members")
+
+      html =
+        live
+        |> element(~s(button[phx-click="withdraw"]))
+        |> render_click()
+
+      assert html =~ "withdrawn"
+      assert Organizations.fetch_invitation(token) == {:error, :invalid_invitation}
     end
 
     test "changes a role", %{conn: conn, scope: scope} do

@@ -105,6 +105,7 @@ organizations ──┬── organization_members ──── users
                 ├── alert_rules               (org default or per-service override)
                 ├── notifiers                 (webhook URL or email per organization)
                 ├── api_tokens                (hashed; acts as the user who made it)
+                ├── organization_invitations  (hashed; single use, expires)
                 └── services ──┬── service_checks ──── service_check_rollups
                                └── incidents ──── incident_events
 ```
@@ -174,6 +175,13 @@ and test, false in production. The scheme check applies either way.
 resolved by slug; `on_mount :require_organization` loads the organization, verifies
 membership, and puts it on the scope. Every context function takes the scope and
 filters by `scope.organization.id`. See ADR-001.
+
+People join either by being added — if they already have an account — or by
+being invited, which emails a single-use link to an address that may have none.
+Accepting creates the account, confirms it, adds the membership and signs them
+in, because holding the link proves control of the mailbox, which is what the
+magic-link login already accepts as proof. Accepting is a `POST`, so a mail
+scanner following the link cannot join on somebody's behalf. See ADR-013.
 
 Roles: `owner` and `admin` may write, `member` may act on incidents, `viewer` is
 read-only. Authorization is enforced in the contexts, not by hiding buttons.
