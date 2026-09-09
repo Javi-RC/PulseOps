@@ -35,8 +35,9 @@ WebSockets. Nothing polls.
 Start here, in this order:
 
 1. [`docs/PROGRESS.md`](docs/PROGRESS.md) — current state, what is done, what is next.
-2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
-3. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
+2. [`docs/ROADMAP.md`](docs/ROADMAP.md) — audited defects, priorities and the phased plan.
+3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
+4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
 
 ## Running it
 
