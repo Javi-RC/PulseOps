@@ -55,14 +55,14 @@ defmodule PulseOpsWeb.ServiceLive.Form do
       Monitoring.change_service(
         socket.assigns.current_scope,
         socket.assigns.service,
-        to_milliseconds(params)
+        to_schema_params(params)
       )
 
     {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
   end
 
   def handle_event("save", %{"service" => params}, socket) do
-    save_service(socket, socket.assigns.live_action, to_milliseconds(params))
+    save_service(socket, socket.assigns.live_action, to_schema_params(params))
   end
 
   defp save_service(socket, :edit, params) do
@@ -97,9 +97,41 @@ defmodule PulseOpsWeb.ServiceLive.Form do
      |> push_navigate(to: ~p"/orgs/#{socket.assigns.current_scope.organization.slug}/services")}
   end
 
-  # The schema keeps milliseconds; the form speaks seconds. Converting at this
-  # boundary keeps the unit conversion in one place instead of scattering
-  # divisions through the template.
+  # Everything the form speaks differently from the schema is translated here,
+  # in one place, rather than scattered through the template.
+  defp to_schema_params(params) do
+    params |> to_milliseconds() |> to_header_map()
+  end
+
+  # Headers are a textarea of `Name: value` lines, because a map is not a thing
+  # an HTML form can post and a repeating-row widget is a lot of machinery for
+  # something everyone already knows how to read.
+  #
+  # A line with no colon becomes a name with an empty value, which is a legal
+  # header — and if it is not a valid header name the changeset says so, which
+  # is how a line the user meant as prose gets a useful error.
+  defp to_header_map(%{"request_headers_text" => text} = params) do
+    headers =
+      text
+      |> to_string()
+      |> String.split(["\r\n", "\n"])
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Map.new(fn line ->
+        case String.split(line, ":", parts: 2) do
+          [name, value] -> {String.trim(name), String.trim(value)}
+          [name] -> {String.trim(name), ""}
+        end
+      end)
+
+    params
+    |> Map.delete("request_headers_text")
+    |> Map.put("request_headers", headers)
+  end
+
+  defp to_header_map(params), do: params
+
+  # The schema keeps milliseconds; the form speaks seconds.
   defp to_milliseconds(params) do
     Enum.reduce(@duration_fields, params, fn {from, to}, acc ->
       case Map.fetch(acc, from) do
@@ -119,6 +151,29 @@ defmodule PulseOpsWeb.ServiceLive.Form do
 
   defp assign_form(socket, changeset) do
     assign(socket, :form, to_form(changeset))
+  end
+
+  # request_headers is not the field the form posts, so its errors have to be
+  # surfaced next to the textarea by hand.
+  defp header_errors(form) do
+    Enum.flat_map(form.errors, fn
+      {:request_headers, {message, _opts}} -> [message]
+      _other -> []
+    end)
+  end
+
+  # The stored map, back in the shape the textarea shows. Sorted so editing a
+  # service does not reshuffle the lines under the cursor.
+  defp headers_text(form) do
+    case Form.input_value(form, :request_headers) do
+      headers when is_map(headers) and map_size(headers) > 0 ->
+        headers
+        |> Enum.sort_by(fn {name, _value} -> name end)
+        |> Enum.map_join("\n", fn {name, value} -> "#{name}: #{value}" end)
+
+      _none ->
+        ""
+    end
   end
 
   defp seconds_value(form, field, default) do
@@ -256,6 +311,71 @@ defmodule PulseOpsWeb.ServiceLive.Form do
               <p class="mt-1 text-xs text-base-content/50">
                 Turning this off stops the supervised process for this service. Its history is kept.
               </p>
+
+              <div class="mt-4">
+                <.input
+                  field={@form[:http_method]}
+                  type="select"
+                  label="Method"
+                  options={Enum.map(Service.http_methods(), &{String.upcase(to_string(&1)), &1})}
+                />
+              </div>
+
+              <div class="mt-4">
+                <.input
+                  type="textarea"
+                  name="service[request_headers_text]"
+                  value={headers_text(@form)}
+                  label="Request headers"
+                  rows="3"
+                  placeholder="Authorization: Bearer ..."
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  One per line, as <code>Name: value</code>. Stored as written, so a token here
+                  sits in the database in plain text.
+                </p>
+                <p :for={message <- header_errors(@form)} class="mt-1 text-sm text-error">
+                  {message}
+                </p>
+              </div>
+
+              <div class="mt-4">
+                <.input
+                  field={@form[:request_body]}
+                  type="textarea"
+                  label="Request body"
+                  rows="2"
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  Only sent with POST.
+                </p>
+              </div>
+
+              <div class="mt-4">
+                <.input
+                  field={@form[:expected_status]}
+                  type="number"
+                  label="Expected status"
+                  placeholder="any 2xx"
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  Leave empty to accept any 2xx. Set it to watch an endpoint whose healthy answer
+                  is something else — a 204, or a 401 that proves it is alive.
+                </p>
+              </div>
+
+              <div class="mt-4">
+                <.input
+                  field={@form[:body_assertion]}
+                  type="text"
+                  label="Body must contain"
+                  placeholder={~s("status":"ok")}
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  The only way to catch a service that is up, answering 200, and saying in its
+                  payload that it is not well.
+                </p>
+              </div>
 
               <div class="mt-4">
                 <.input field={@form[:public]} type="checkbox" label="Show on the status page" />

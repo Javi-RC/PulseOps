@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/status-page-and-deploy` |
 | Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) in progress — product surface |
-| Next | Configurable checks, or the JSON API — both Phase 3 |
-| Checks | `mix check` green: 501 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | JSON API with organization tokens, then email invitations |
+| Checks | `mix check` green: 524 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -677,6 +677,42 @@ the server booted, HTTP redirected to HTTPS, HSTS present, `/metrics` 401 then
 and `mix` is absent from the image.
 
 
+### Phase 3 — configurable checks
+
+- A probe was `Req.get(url)` with no options, so PulseOps could only watch
+  endpoints that are public, answer GET, and say everything they mean in the
+  status line. A service now carries `http_method`, `request_headers`,
+  `request_body`, `expected_status` and `body_assertion`.
+- **Every column defaults to the old hardcoded behaviour**, so an existing
+  service is probed exactly as before.
+- `expected_status` null means any 2xx; an integer means exactly that, which is
+  how you watch an endpoint whose healthy answer is a 204, or one that proves it
+  is alive by answering 401.
+- **`body_assertion` is the point of the whole item.** It catches a service that
+  is up, answering 200, and saying in its payload that it is not well — the
+  failure a status code cannot see. Checked *after* the status, so a 503 is
+  reported as a bad status rather than as a missing string.
+- Methods are GET, HEAD and POST. PUT, PATCH and DELETE are deliberately absent:
+  nothing that changes state on the far side belongs on a schedule.
+- **Header injection is rejected in the changeset.** A line break in either half
+  of a header lets a tenant append headers of their own to a request PulseOps
+  makes on their behalf. Names must also be RFC tokens, which is what turns a
+  line the form could not parse into "that is not a header name". Count, length
+  and a HEAD-with-body-assertion contradiction are checked too.
+- Headers are a textarea of `Name: value` lines, parsed into a map at the form
+  boundary — the same place the seconds-to-milliseconds conversion happens. A
+  map is not something an HTML form can post, and a repeating-row widget is a
+  lot of machinery for something everyone can already read.
+- **A header value is stored as written**, so a token sits in the database in
+  plain text exactly like `notifiers.secret_token` does. That is the same known
+  P2 debt, now with a second place to fix; the form says so.
+
+**Verified against the running app** with
+`priv/scenarios/configurable_checks.exs`, including the case that matters: a
+service pointed at `/dev/flaky`, which answers **200**, is correctly reported
+**down** because the body does not contain what the service requires.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -769,6 +805,10 @@ unique index (ADR-004) is already what makes the clustering step safe.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
+- **Registering a user already creates their personal organization**, whose slug
+  comes from the email local part. A scenario script that registers
+  `checks-123@…` and then creates an organization named `Checks 123` collides
+  with it, because both slugify to `checks-123`.
 - **A release ships the builder's ERTS, so the two Docker stages must agree on
   their Debian.** Building on `elixir:1.20-otp-28` (trixie, glibc 2.41) and
   running on `debian:bookworm-slim` (glibc 2.36) produced an image that built

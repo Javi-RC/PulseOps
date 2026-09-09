@@ -81,6 +81,17 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## Configurable checks
+
+A service says how it wants to be probed — GET, HEAD or POST, with headers and a
+body — and what counts as healthy. `expected_status` accepts an exact code, so an
+endpoint whose healthy answer is a `204`, or one that proves it is alive by
+answering `401`, can be watched. `body_assertion` requires a string in the
+response, which is the only way to catch a service that is up, answering `200`,
+and saying in its payload that its database is gone.
+
+Everything defaults to the previous behaviour: a `GET` that accepts any 2xx.
+
 ## Public status page
 
 An organization can publish a page at `/status/:slug` that anyone can read

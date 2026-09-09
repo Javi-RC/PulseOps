@@ -239,16 +239,31 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
   defp start_check(state) do
     %{url: url, timeout_ms: timeout_ms} = state.service
     client = HealthCheck.client()
+    opts = check_options(state.service)
 
     task =
       Task.Supervisor.async_nolink(PulseOps.Monitoring.TaskSupervisor, fn ->
-        client.check(url, timeout_ms: timeout_ms)
+        client.check(url, opts)
       end)
 
     timeout_ref =
       Process.send_after(self(), {:check_timeout, task.ref}, timeout_ms + @task_grace_ms)
 
     %{state | task: task, timeout_ref: timeout_ref}
+  end
+
+  # How this particular service wants to be probed. Built here, in the monitor,
+  # so the HTTP client stays a plain function of a URL and options and never
+  # learns what a Service is.
+  defp check_options(%Service{} = service) do
+    [
+      timeout_ms: service.timeout_ms,
+      method: service.http_method,
+      headers: Map.to_list(service.request_headers || %{}),
+      body: service.request_body,
+      expected_status: service.expected_status,
+      body_assertion: service.body_assertion
+    ]
   end
 
   ## State machine

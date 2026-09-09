@@ -82,6 +82,15 @@ Task.Supervisor.async_nolink  ──►  HealthCheck.Req  ──►  {:ok, Resul
 The jitter keeps monitors from synchronising into a thundering herd after a mass
 restart. See ADR-002 for why the request is not made inline.
 
+A probe is not always `GET` and a status line is not always the whole story. A
+service says how it wants to be reached — method, headers, body — and what
+counts as healthy: an exact status, so an endpoint whose healthy answer is `204`
+or `401` can be watched, and a string that must appear in the response, which is
+the only way to catch a service that is up, answering `200`, and saying in its
+payload that its database is gone. The monitor builds those options and the HTTP
+client stays a function of a URL and a keyword list, never learning what a
+`Service` is.
+
 Deciding *what the status is* is not part of the monitor. `StatusMachine` is a
 pure module — no processes, no database, no clock — that folds probe verdicts
 into a status under the rule's thresholds. The monitor owns the I/O and the
@@ -100,7 +109,10 @@ organizations ──┬── organization_members ──── users
 ```
 
 - `services` — name, description, environment, url, `check_interval_ms`,
-  `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`.
+  `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`, plus
+  how to make the request: `http_method`, `request_headers`, `request_body`,
+  and what counts as healthy — `expected_status` (null means any 2xx) and
+  `body_assertion` (null means the body is not read).
 - `alert_rules` — failure/success thresholds and a severity for incident handling;
   `service_id` null is the organization default, otherwise it overrides one
   service. Monitors read their rule on boot, so changing a rule restarts every
