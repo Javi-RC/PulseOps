@@ -272,17 +272,42 @@ defmodule PulseOps.Monitoring do
   end
 
   @doc """
-  Deletes `service_checks` older than `days` days.
+  Deletes `service_checks` older than `days` days, in batches.
 
   Returns the number of deleted rows.
+
+  One unbounded `DELETE` over the fastest-growing table in the schema holds row
+  locks and grows the transaction for as long as it runs, and how long that is
+  depends on the retention window — a config change could make the nightly job
+  sit on the table for minutes. Deleting a bounded number of rows at a time
+  keeps each statement short whatever the backlog looks like.
   """
-  def prune_old_checks(days) when is_integer(days) and days > 0 do
+  @spec prune_old_checks(pos_integer(), [{:batch_size, pos_integer()}]) :: non_neg_integer()
+  def prune_old_checks(days, opts \\ []) when is_integer(days) and days > 0 do
+    batch_size = Keyword.get(opts, :batch_size, 10_000)
     cutoff = DateTime.add(DateTime.utc_now(), -days * 86_400, :second)
 
-    {count, _} =
-      Repo.delete_all(from c in Check, where: c.inserted_at < ^cutoff)
+    delete_expired(cutoff, batch_size, 0)
+  end
 
-    count
+  defp delete_expired(cutoff, batch_size, deleted) do
+    # Postgres has no LIMIT on DELETE, so the batch is chosen by a subquery.
+    # Selecting ids keeps that lookup on the inserted_at index.
+    batch =
+      from c in Check,
+        where: c.inserted_at < ^cutoff,
+        select: c.id,
+        limit: ^batch_size
+
+    {count, _} = Repo.delete_all(from c in Check, where: c.id in subquery(batch))
+
+    # A short batch means the backlog is exhausted; anything else would be one
+    # more round trip to learn the same thing.
+    if count < batch_size do
+      deleted + count
+    else
+      delete_expired(cutoff, batch_size, deleted + count)
+    end
   end
 
   @doc """

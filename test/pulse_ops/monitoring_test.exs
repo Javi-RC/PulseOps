@@ -404,5 +404,69 @@ defmodule PulseOps.MonitoringTest do
       assert %PulseOps.Monitoring.Check{} =
                Repo.get(PulseOps.Monitoring.Check, recent.id)
     end
+
+    test "deletes in bounded batches rather than one unbounded statement" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      expired =
+        for _ <- 1..25 do
+          {:ok, check} = record(service, :down, nil)
+          check.id
+        end
+
+      {25, nil} =
+        Repo.update_all(
+          from(c in PulseOps.Monitoring.Check, where: c.id in ^expired),
+          set: [inserted_at: DateTime.add(DateTime.utc_now(), -31, :day)]
+        )
+
+      {:ok, fresh} = record(service, :healthy, 10)
+
+      {deleted, statements} =
+        count_deletes(fn -> Monitoring.prune_old_checks(30, batch_size: 10) end)
+
+      assert deleted == 25
+      # 10, 10, then a short batch of 5 that says the backlog is exhausted.
+      assert statements == 3
+
+      assert %PulseOps.Monitoring.Check{} = Repo.get(PulseOps.Monitoring.Check, fresh.id)
+    end
+  end
+
+  # Counts the DELETE statements issued while running fun, so "in batches" is
+  # actually asserted rather than inferred from the row count.
+  defp count_deletes(fun) do
+    test_pid = self()
+    ref = make_ref()
+    handler_id = {:retention_delete_counter, ref}
+
+    :telemetry.attach(
+      handler_id,
+      [:pulse_ops, :repo, :query],
+      fn _event, _measurements, metadata, _config ->
+        if self() == test_pid and String.starts_with?(metadata.query, "DELETE") do
+          send(test_pid, {ref, :delete})
+        end
+      end,
+      nil
+    )
+
+    result =
+      try do
+        fun.()
+      after
+        :telemetry.detach(handler_id)
+      end
+
+    {result, drain_deletes(ref, 0)}
+  end
+
+  defp drain_deletes(ref, count) do
+    receive do
+      {^ref, :delete} -> drain_deletes(ref, count + 1)
+    after
+      0 -> count
+    end
   end
 end

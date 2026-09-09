@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
-| Next | F6 — batched retention + index, then the repo housekeeping |
-| Checks | `mix check` green: 424 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | Repo housekeeping, then Phase 2 of [`ROADMAP.md`](ROADMAP.md) |
+| Checks | `mix check` green: 425 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -409,6 +409,28 @@ standing, and a real recover-then-break-again cycle not being suppressed.
   guard would break them. The scheme check applies either way.
 - Tested with the ranges spelled out, plus two StreamData properties over IPv4
   host bits — the first use of StreamData, which was declared and unused.
+
+### Stabilisation — F6: retention deletes in batches, on an index
+
+- The only index on `service_checks` was `[:service_id, :inserted_at]`, which
+  serves every read — they are all "the latest checks for one service". The
+  nightly retention delete filters on `inserted_at` alone, and a composite index
+  cannot serve a predicate that does not constrain its leading column. So the
+  job was a **sequential scan over the largest table in the schema, every
+  night**, and one unbounded `DELETE` holding row locks for as long as it ran.
+- New index on `[:inserted_at]`, created `concurrently` with
+  `@disable_ddl_transaction` and `@disable_migration_lock`, because this
+  migration will one day run against a table with tens of millions of rows.
+- `prune_old_checks/2` takes `batch_size` (default 10,000) and deletes in
+  bounded batches until a short one says the backlog is exhausted. Postgres has
+  no `LIMIT` on `DELETE`, so the batch is picked by an id subquery, which keeps
+  the lookup on the new index.
+- How long the old statement ran depended on the retention window, which is
+  *configurable* — a config change could have put the nightly job on the table
+  for minutes. Batching makes each statement short whatever the backlog is.
+- The test asserts the batching itself by counting `DELETE` statements through
+  Ecto telemetry: 25 expired rows at `batch_size: 10` is three statements, not
+  one, and the fresh row survives.
 
 ## Next steps
 
