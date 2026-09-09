@@ -8,9 +8,9 @@ of each phase. **Read this first when picking the work back up.**
 | | |
 |---|---|
 | Branch | `feature/incident-notifications` |
-| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) — scale and visibility |
-| Next | `mix test --cover` with a threshold in CI — last of Phase 2 |
-| Checks | `mix check` green: 464 tests, Credo `--strict` clean, Dialyzer clean |
+| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) complete — scale and visibility |
+| Next | Phase 3 of [`ROADMAP.md`](ROADMAP.md) — product surface |
+| Checks | `mix check` green: 470 tests, 91.30% coverage, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -590,6 +590,24 @@ label anywhere in the output.
   properties and two example tests.
 - `ServiceMonitor.status/1` reports the thresholds in force, which is how a test
   observes that a rule change reached a running monitor.
+
+
+### Phase 2 — coverage with a threshold in CI
+
+- `mix test --cover` now runs in CI and in `mix check`, with
+  `summary: [threshold: 90]` in `mix.exs`. Verified that it actually gates:
+  raising the threshold to 99 exits 3, and 90 exits 0.
+- The threshold is a **ratchet set just under what the suite achieves** (91.30%),
+  so it catches a drop rather than inviting tests written to move a number.
+- `ignore_modules` excludes test support — counting `DataCase` and the fixtures
+  flatters the figure, since they are exercised by definition — the dev-only
+  `/dev/flaky` demo modules, and generated shells with no logic of ours.
+- **Chasing the number found a real gap.** `HealthCheck.Req` was at 0%: every
+  test swaps the whole behaviour for a Mox mock, so the real client, *including
+  the SSRF guard F5 added to it*, was never executed. It now has the same
+  `Req.Test` seam the webhook sender has (`health_check_transport: :stub`) and
+  six tests covering the response mapping and the guard — including one asserting
+  a private target is refused **without any request being attempted**.
 
 
 ## Next steps

@@ -32,6 +32,7 @@ defmodule PulseOps.Monitoring.HealthCheck.Req do
       Req.get(url,
         receive_timeout: timeout,
         connect_options: [timeout: timeout],
+        plug: plug(),
         # Retries are the state machine's decision, not the client's: a silent
         # retry here would hide a failure the monitor needs to count.
         retry: false,
@@ -56,6 +57,16 @@ defmodule PulseOps.Monitoring.HealthCheck.Req do
 
       {:error, exception} ->
         {:error, %Result{response_time_ms: elapsed, error: describe(exception)}}
+    end
+  end
+
+  # The same seam the webhook sender uses: tests route the request through a
+  # Req.Test plug so this module's own mapping of responses to results can be
+  # exercised without the network. Everything else goes over the wire.
+  defp plug do
+    case Application.get_env(:pulse_ops, :health_check_transport, :http) do
+      :stub -> {Req.Test, :health_check}
+      :http -> nil
     end
   end
 

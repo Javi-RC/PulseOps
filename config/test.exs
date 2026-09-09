@@ -74,4 +74,9 @@ config :pulse_ops, :dashboard_debounce_ms, 0
 # lookups. UrlGuard's own tests turn the check on explicitly.
 config :pulse_ops, :allow_private_targets, true
 
+# Most tests swap the whole HealthCheck behaviour for a Mox mock. The tests for
+# the real Req-backed client cannot do that — they are testing it — so it gets
+# the same Req.Test treatment the webhook sender has.
+config :pulse_ops, health_check_transport: :stub
+
 config :pulse_ops, webhook_client: :stub
