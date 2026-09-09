@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/status-page-and-deploy` |
 | Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) in progress — product surface |
-| Next | JSON API with organization tokens, then email invitations |
-| Checks | `mix check` green: 524 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | Email invitations for people who are not registered yet |
+| Checks | `mix check` green: 572 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -711,6 +711,42 @@ and `mix` is absent from the image.
 `priv/scenarios/configurable_checks.exs`, including the case that matters: a
 service pointed at `/dev/flaky`, which answers **200**, is correctly reported
 **down** because the body does not contain what the service requires.
+
+
+### Phase 3 — JSON API with organization tokens
+
+- `pipeline :api` had been declared and unused since bootstrap. Behind it now:
+  services (list, show, create, update, delete) and incidents (list, show,
+  workflow update, resolve) at `/api/v1`.
+- **The API restates no authorization.** A token produces a `%Scope{}`, and the
+  controllers call the same context functions the LiveViews call, so every
+  tenant filter and role check applies unchanged. The SSRF guard, the
+  alert-rule tenancy check and the "resolving is not a workflow status" rule all
+  hold over HTTP without being mentioned there. See **ADR-012**.
+- **A token has no permissions of its own.** It names the person who created it
+  and takes its role from their membership *at request time*, so it can never
+  outrank its owner, weakens when they are demoted, and stops working entirely
+  when they leave the organization. There is a test for each.
+- **Only the hash is stored.** The token is shown once and cannot be recovered —
+  unlike `notifiers.secret_token`, which is kept in the clear because it has to
+  be *sent* on every delivery. Recognising something needs no more than its hash.
+- Missing, malformed, unknown and revoked tokens all answer 401 with the same
+  body, and another tenant's id answers 404 rather than 403: either distinction
+  would confirm something exists.
+- **The API found a latent bug.** `resolve_incident/3` did
+  `Map.put(attrs, :resolved_by_id, ...)`, which produced a map of mixed atom and
+  string keys as soon as the attrs came from JSON. It never showed through the
+  LiveView, which passes an empty map. `resolved_by_id` is now `put_change`d
+  rather than cast — which is also what the project's own convention says about
+  fields set programmatically.
+- `PulseOps.Accounts.User` gained `@type t`, which every other schema already
+  had; without it a `@spec` naming it failed Dialyzer with `unknown_type`.
+
+**Verified against the running app** with `priv/scenarios/json_api.exs`, over
+real HTTP with a real token: 401 unauthenticated, 201 on create, 422 carrying
+the SSRF guard's own message, 404 for another tenant, resolve credited to the
+token's owner, 409 on a second resolve, a demoted owner's token reading but not
+writing, and 401 the moment it is revoked.
 
 
 ## Next steps

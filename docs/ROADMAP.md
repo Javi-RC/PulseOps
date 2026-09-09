@@ -261,7 +261,7 @@ Make the system survive realistic data and observe itself.
 Turn the engine into something other people interact with.
 
 - [x] Public status page (see [Star features](#star-features))
-- [ ] JSON API + organization tokens
+- [x] JSON API + organization tokens
 - [x] Configurable checks: HTTP method, headers, expected status, body assertion
 - [ ] Email invitations for people who are not registered yet
 - [x] **F9** Real deploy: production Dockerfile, `force_ssl`, mandatory

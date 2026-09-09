@@ -72,10 +72,20 @@ defmodule PulseOps.Incidents.Incident do
   @doc false
   def resolve_changeset(incident, attrs) do
     incident
-    |> cast(attrs, [:cause, :resolved_by_id])
+    # resolved_by_id is set by the caller, never cast: who resolved something is
+    # not a field the resolver gets to state. It also kept this changeset from
+    # accepting a mix of string and atom keys, which is what a JSON request
+    # produces once the context adds one of its own.
+    |> cast(attrs, [:cause])
     |> put_change(:status, :resolved)
     |> put_change(:resolved_at, DateTime.utc_now(:second))
   end
+
+  @doc """
+  Stamps who resolved an incident. Nil for the monitor closing one itself.
+  """
+  def put_resolver(changeset, nil), do: changeset
+  def put_resolver(changeset, user_id), do: put_change(changeset, :resolved_by_id, user_id)
 
   @doc """
   How long the incident lasted, in seconds; for an open incident, how long it has

@@ -265,6 +265,60 @@ from one that does not exist: both raise `StatusPageLive.NotFound` and answer
 
 ---
 
+## ADR-012 — The API is a second way in, not a second domain
+
+**Decision.** A token authenticates by producing a `%Scope{}`, and every API
+controller then calls the same context function a LiveView calls. There is no
+authorization logic in `PulseOpsWeb.Api`: the tenant filter and the role check
+are already inside `Monitoring` and `Incidents`, and they apply because the
+scope is the same shape.
+
+A token names the **person** who created it and carries no role of its own. The
+role is read from that person's membership at request time.
+
+Only the hash is stored. The token is shown once, at creation, and cannot be
+recovered.
+
+**Why the scope.** `pipeline :api` had been declared and unused since bootstrap,
+and the tempting thing to write behind it is a set of `api_`-prefixed context
+functions. That is how two halves of an application drift: a rule gets added to
+one and forgotten in the other, and the one that gets forgotten is the one
+without a UI to notice it. Because tenancy and roles were already parameters of
+the domain rather than properties of a session (ADR-001), an API needed no new
+rules at all — which is the thing worth having proved. The SSRF guard, the
+alert-rule tenancy check, the "resolving is not a workflow status" rule: all of
+them apply over HTTP without being mentioned there.
+
+**Why a token has no role of its own.** A token with independently settable
+permissions is a second permission system, and it outlives the reason it was
+granted — the classic form being a token that still works long after the person
+who made it left. Reading the role from the owner's membership on each request
+means a token can never outrank its owner, loses power the moment they are
+demoted, and stops working entirely when they leave.
+
+**Why only the hash.** A token here only has to be *recognised*, and recognising
+something needs no more than its hash. This is deliberately unlike
+`notifiers.secret_token`, which is stored in the clear because it has to be
+*sent* on every delivery — a different requirement, not a different standard.
+
+**Rejected.** *Tokens with their own role or scopes.* More flexible, and a
+second thing to keep in agreement with membership. Worth revisiting only when
+somebody actually needs a token weaker than its owner.
+
+*Organization-wide tokens belonging to nobody.* Simpler, and then a resolved
+incident has no author — `resolved_by_id` would be null for every API action,
+and the timeline would stop distinguishing "the monitor saw this" from
+"somebody did this", which is the whole point of that column (ADR-008).
+
+*Deleting a revoked token's row.* Keeping it means a token that turns up in a
+log later can still be identified as one already dealt with.
+
+**Consequence.** A missing, malformed, unknown and revoked token all answer 401
+with the same body: distinguishing them would say whether a token had ever
+existed. Another tenant's id answers 404 rather than 403, for the same reason.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

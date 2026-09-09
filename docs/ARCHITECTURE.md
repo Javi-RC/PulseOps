@@ -104,6 +104,7 @@ a GenServer and cheap to explore through a function.
 organizations ──┬── organization_members ──── users
                 ├── alert_rules               (org default or per-service override)
                 ├── notifiers                 (webhook URL or email per organization)
+                ├── api_tokens                (hashed; acts as the user who made it)
                 └── services ──┬── service_checks ──── service_check_rollups
                                └── incidents ──── incident_events
 ```
@@ -176,6 +177,13 @@ filters by `scope.organization.id`. See ADR-001.
 
 Roles: `owner` and `admin` may write, `member` may act on incidents, `viewer` is
 read-only. Authorization is enforced in the contexts, not by hiding buttons.
+
+A token is the second way to hold a scope. `PulseOpsWeb.Plugs.ApiAuth` turns a
+bearer token into the same `%Scope{}` a session produces, and the API controllers
+then call the same context functions the LiveViews call — so every tenant filter
+and role check applies without the API restating one. A token names the person
+who made it and takes its role from their membership at request time, so it can
+never outrank its owner. Only the hash is stored. See ADR-012.
 
 The one deliberate exception is the public status page at `/status/:slug`, which
 anybody can read. It goes through `PulseOps.StatusPage` and nowhere else — a

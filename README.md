@@ -81,6 +81,21 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## JSON API
+
+Services and incidents are readable and writable over HTTP at `/api/v1`, with an
+organization token minted in **Settings → API tokens**:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://your-host/api/v1/services
+curl -H "Authorization: Bearer $TOKEN" -X POST   https://your-host/api/v1/incidents/42/resolve -d '{"cause":"restarted the pool"}'
+```
+
+A token acts as the person who created it and takes its role from their
+membership on every request, so it can never do more than they can and stops
+working when they leave the organization. Only a hash is stored — the token is
+shown once and cannot be recovered, only replaced.
+
 ## Configurable checks
 
 A service says how it wants to be probed — GET, HEAD or POST, with headers and a

@@ -176,6 +176,23 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
       <.card class="mt-6 max-w-xl">
         <div class="flex items-center justify-between gap-4">
           <div>
+            <p class="font-medium">API tokens</p>
+            <p class="mt-0.5 text-sm text-base-content/50">
+              Let a program read and change this organization's services and incidents over HTTP.
+            </p>
+          </div>
+          <.link
+            navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/api-tokens"}
+            class="btn btn-soft btn-sm"
+          >
+            Manage tokens
+          </.link>
+        </div>
+      </.card>
+
+      <.card class="mt-6 max-w-xl">
+        <div class="flex items-center justify-between gap-4">
+          <div>
             <p class="font-medium">Notifications</p>
             <p class="mt-0.5 text-sm text-base-content/50">
               The webhook endpoints and email addresses that hear about incidents when they
