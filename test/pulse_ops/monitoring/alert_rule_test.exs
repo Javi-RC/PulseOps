@@ -35,6 +35,30 @@ defmodule PulseOps.Monitoring.AlertRuleTest do
       assert rule.severity == :critical
     end
 
+    test "a rule cannot be bound to another organization's service", %{scope: scope} do
+      victim = organization_scope_fixture()
+      their_service = service_fixture(victim)
+
+      assert {:error, changeset} =
+               Monitoring.create_alert_rule(
+                 scope,
+                 valid_alert_rule_attributes(%{service_id: their_service.id})
+               )
+
+      assert "must belong to the organization" in errors_on(changeset).service_id
+
+      # The point is not that the attacker reads anything — rule_for_monitoring/1
+      # filters by organization anyway — but that the row would occupy the
+      # victim's slot in the unique index and lock them out of their own service.
+      assert {:ok, rule} =
+               Monitoring.create_alert_rule(
+                 victim,
+                 valid_alert_rule_attributes(%{service_id: their_service.id})
+               )
+
+      assert rule.service_id == their_service.id
+    end
+
     test "a member may not manage alert rules", %{scope: scope} do
       assert Monitoring.create_alert_rule(%{scope | role: :member}, %{}) ==
                {:error, :unauthorized}

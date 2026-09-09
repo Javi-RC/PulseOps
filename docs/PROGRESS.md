@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
-| Next | F3 — validate `service_id` tenancy in `AlertRule` |
-| Checks | `mix check` green: 407 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | F4 — dashboard debounce (the cheap half) |
+| Checks | `mix check` green: 408 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -346,6 +346,20 @@ standing, and a real recover-then-break-again cycle not being suppressed.
   allowed"). It is now inverted, plus one confirming a second organization is
   still free to have its own default.
 
+### Stabilisation — F3: alert rules cannot point at another tenant's service
+
+- `AlertRule.changeset/3` cast `:service_id` with only a `foreign_key_constraint`,
+  which says the service exists *somewhere* — not that it belongs to the
+  organization creating the rule. `Notifier.changeset/3` already validated this;
+  the alert rule did not.
+- The impact was not reading another tenant's data — `rule_for_monitoring/1`
+  filters by `organization_id` — but **taking the victim's slot in the unique
+  index**, so they could never create their own rule for their own service. A
+  cross-tenant denial of service through an unvalidated field.
+- `validate_service_scope/1` added, mirroring the notifier's, and running after
+  `organization_id` is put from the scope so it has something to compare against.
+  The check is in the changeset rather than the form, so it holds for any caller.
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -356,7 +370,8 @@ next work is stabilisation rather than new features:
    — fixed, see the F1 section above and ADR-009.
 2. ~~Several organization-default alert rules can exist~~ — fixed by a partial
    unique index, see the F2 section above.
-3. `AlertRule` does not validate that `service_id` belongs to the tenant.
+3. ~~`AlertRule` does not validate that `service_id` belongs to the tenant~~ —
+   fixed, see the F3 section above.
 4. The dashboard reloads four queries on every broadcast, one of them
    aggregating 24 h of raw checks.
 5. Service and webhook URLs allow SSRF into the internal network.
