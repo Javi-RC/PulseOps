@@ -40,12 +40,24 @@ defmodule PulseOps.Monitoring.AlertRuleTest do
                {:error, :unauthorized}
     end
 
-    test "two org defaults are allowed", %{scope: scope} do
+    test "an organization cannot have two default rules", %{scope: scope} do
       assert {:ok, _first} =
                Monitoring.create_alert_rule(scope, valid_alert_rule_attributes(severity: :high))
 
-      assert {:ok, _second} =
+      # Postgres treats NULLs as distinct, so the plain unique index on
+      # service_id never held this; a partial unique index does. The form's
+      # check-then-act guard is now a convenience, not the guarantee.
+      assert {:error, changeset} =
                Monitoring.create_alert_rule(scope, valid_alert_rule_attributes(severity: :low))
+
+      assert "this organization already has a default rule" in errors_on(changeset).service_id
+    end
+
+    test "another organization is free to have its own default", %{scope: scope} do
+      other = organization_scope_fixture()
+
+      assert {:ok, _first} = Monitoring.create_alert_rule(scope, valid_alert_rule_attributes())
+      assert {:ok, _second} = Monitoring.create_alert_rule(other, valid_alert_rule_attributes())
     end
 
     test "a service cannot have two rules", %{scope: scope} do

@@ -90,6 +90,13 @@ defmodule PulseOps.Monitoring.AlertRule do
     |> validate_number(:degraded_ratio, greater_than: 0.0, less_than_or_equal_to: 1.0)
     |> put_change(:organization_id, organization_scope.organization.id)
     |> unique_constraint(:service_id, message: "this service already has an alert rule")
+    # The database, not the form, is what guarantees a single organization
+    # default. Reported against :service_id because that is the field the user
+    # can actually change — the select whose empty value means "default".
+    |> unique_constraint(:service_id,
+      name: :alert_rules_one_default_per_organization,
+      message: "this organization already has a default rule"
+    )
     |> foreign_key_constraint(:organization_id)
     |> foreign_key_constraint(:service_id)
   end

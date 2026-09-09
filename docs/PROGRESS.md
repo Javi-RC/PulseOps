@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
-| Next | F2 — partial unique index for the organization-default alert rule |
-| Checks | `mix check` green: 406 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | F3 — validate `service_id` tenancy in `AlertRule` |
+| Checks | `mix check` green: 407 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -322,6 +322,30 @@ the grace window, a recovery during the window leaving the manual resolution
 standing, and a real recover-then-break-again cycle not being suppressed.
 
 
+### Stabilisation — F2: one default alert rule per organization
+
+- `unique_index(:alert_rules, [:service_id])` never said what it looked like it
+  said. Postgres treats NULLs as distinct from each other, so any number of rows
+  with a null `service_id` — the organization default — were legal. The only
+  thing preventing a second default was the form hiding the option once one
+  existed: check-then-act, no transaction, and bypassable with a crafted submit.
+- With duplicates present, `rule_for_monitoring/1` and `get_rule_for_service/2`
+  ordered by `is_nil(service_id)` with `limit: 1` and **no tiebreaker**, so which
+  rule governed a service was whatever the planner returned.
+- Migration `add_default_alert_rule_unique_index` adds
+  `alert_rules_one_default_per_organization`, unique on `organization_id` where
+  `service_id IS NULL`. Its `up` deletes pre-existing duplicates first, keeping
+  the lowest id — the index cannot be created while they exist, and a
+  development database may well carry some.
+- Both lookups gained `asc: r.id` as a tiebreaker, so resolution is deterministic
+  regardless of what the data looks like.
+- `AlertRule.changeset/3` declares the constraint, reported against `:service_id`
+  because that is the field the user can change. The form guard stays as a
+  convenience; it is no longer the guarantee.
+- **A test asserted the bug as intended behaviour** ("two org defaults are
+  allowed"). It is now inverted, plus one confirming a second organization is
+  still free to have its own default.
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -330,8 +354,8 @@ next work is stabilisation rather than new features:
 
 1. ~~A manually resolved incident never reopens while the service is still down~~
    — fixed, see the F1 section above and ADR-009.
-2. Several organization-default alert rules can exist (Postgres NULLs are
-   distinct, so the unique index does not hold).
+2. ~~Several organization-default alert rules can exist~~ — fixed by a partial
+   unique index, see the F2 section above.
 3. `AlertRule` does not validate that `service_id` belongs to the tenant.
 4. The dashboard reloads four queries on every broadcast, one of them
    aggregating 24 h of raw checks.

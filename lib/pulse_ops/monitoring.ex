@@ -388,7 +388,9 @@ defmodule PulseOps.Monitoring do
     from(r in AlertRule,
       where: r.organization_id == ^scope.organization.id,
       where: r.service_id == ^service_id or is_nil(r.service_id),
-      order_by: [asc: is_nil(r.service_id)],
+      # A service's own rule wins over the organization default. The id breaks
+      # the tie so the answer cannot depend on the planner.
+      order_by: [asc: is_nil(r.service_id), asc: r.id],
       limit: 1
     )
     |> Repo.one()
@@ -495,7 +497,9 @@ defmodule PulseOps.Monitoring do
     from(r in AlertRule,
       where: r.organization_id == ^organization_id,
       where: r.service_id == ^service_id or is_nil(r.service_id),
-      order_by: [asc: is_nil(r.service_id)],
+      # A service's own rule wins over the organization default. The id breaks
+      # the tie so the answer cannot depend on the planner.
+      order_by: [asc: is_nil(r.service_id), asc: r.id],
       limit: 1
     )
     |> Repo.one()
