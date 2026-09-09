@@ -321,6 +321,25 @@ failing probe opens a new incident) plus the timeline event, suppression inside
 the grace window, a recovery during the window leaving the manual resolution
 standing, and a real recover-then-break-again cycle not being suppressed.
 
+**Verified against the running app**, which is this project's standard and the
+scenario that fails silently without the fix. `priv/scenarios/f1_reconciliation.exs`
+drives it end to end with real monitors, real HTTP probes against `/dev/flaky`
+and real timers, nothing mocked:
+
+```
+docker compose run --rm -e PHX_SERVER=true web mix run priv/scenarios/f1_reconciliation.exs
+```
+
+It breaks the endpoint, waits for the incident, resolves it by hand while the
+service is still broken, confirms nothing reopens inside the grace period,
+confirms a **new** incident with a `:reopened` event opens once the grace is
+lifted, then heals the endpoint and confirms the monitor closes it on its own.
+
+**`PHX_SERVER=true` is not optional.** Under plain `mix run` the endpoint starts
+but never listens, so every probe gets "connection refused" — which still drives
+a service down and would look like a passing scenario while proving nothing
+about the flaky endpoint. The script now asserts a healthy probe first.
+
 
 ### Stabilisation — F2: one default alert rule per organization
 
@@ -527,6 +546,10 @@ unique index (ADR-004) is already what makes the clustering step safe.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
+- **`mix run` starts the endpoint but does not listen.** Only `mix phx.server` or
+  `PHX_SERVER=true` makes it serve. A scenario script probing the app's own
+  `/dev/flaky` under plain `mix run` gets "connection refused" on every probe,
+  which drives the service down and can look like the scenario working.
 - **`send(self(), msg)` does not jump the queue.** The dashboard debounce first
   deferred with `send(self(), :reload)` when the window was zero, on the theory
   that a mailbox delivery beats a timer. It does, but the reload message is
