@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) — scale and visibility |
-| Next | Extract the status state machine and property-test it |
-| Checks | `mix check` green: 450 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | `mix test --cover` with a threshold in CI — last of Phase 2 |
+| Checks | `mix check` green: 464 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -567,6 +567,31 @@ label anywhere in the output.
   made from it afterwards, so they need no polling.
 
 
+### Phase 2 — the status state machine is pure, and property-tested
+
+- `next_status/3`, `tally/2` and the degraded check were private functions of
+  `ServiceMonitor`, entangled with its I/O. `PulseOps.Monitoring.StatusMachine`
+  now holds them: no processes, no database, no clock. The monitor keeps a
+  `%StatusMachine{}` in its state and asks it.
+- The behaviour worth testing there is **hysteresis** — down needs sustained
+  failure, recovery needs sustained success — and hysteresis bugs only appear
+  over *sequences*, which are expensive to explore through a GenServer and cheap
+  through a function. That is the whole reason for the split.
+- Five StreamData properties: entering `:down` always took `failure_threshold`
+  consecutive failures, leaving it always took `success_threshold` consecutive
+  successes, a short run of failures never moves the status, the two counters
+  are never both running, and the status is always a known one.
+- **The first version of the "two open incidents" property could not fail.** It
+  derived incident opens and closes from *status changes*, so they alternated by
+  construction whatever the machine did. It was replaced by the properties above,
+  which are what that invariant actually rests on; the database holds the
+  invariant itself (ADR-004). The replacements were **checked by mutation**:
+  weakening the threshold comparison to `>= threshold - 1` fails two of the five
+  properties and two example tests.
+- `ServiceMonitor.status/1` reports the thresholds in force, which is how a test
+  observes that a rule change reached a running monitor.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -612,6 +637,11 @@ unique index (ADR-004) is already what makes the clustering step safe.
   Registry drops its entry only when it handles the `:DOWN`. `stop_monitor/1`
   therefore waits for the name to be released, or `restart_monitor/1` would fail
   with `{:already_started, <dead pid>}`.
+- **A property test can be structurally incapable of failing.** The first
+  "no two open incidents" property derived incident opens and closes from status
+  *changes*, so they alternated by construction no matter what the state machine
+  did. Mutating the implementation is the cheap way to find this out: if
+  weakening the code does not fail the property, the property was decoration.
 - **Application env is global, so a test that flips it cannot be `async: true`.**
   `UrlGuardTest` toggles `:allow_private_targets` and, while async, failed
   unrelated modules whose fixtures were saving a service URL at that moment. The

@@ -82,6 +82,13 @@ Task.Supervisor.async_nolink  ──►  HealthCheck.Req  ──►  {:ok, Resul
 The jitter keeps monitors from synchronising into a thundering herd after a mass
 restart. See ADR-002 for why the request is not made inline.
 
+Deciding *what the status is* is not part of the monitor. `StatusMachine` is a
+pure module — no processes, no database, no clock — that folds probe verdicts
+into a status under the rule's thresholds. The monitor owns the I/O and the
+scheduling and asks it. The interesting behaviour there is hysteresis, whose
+bugs only appear over sequences, and sequences are expensive to explore through
+a GenServer and cheap to explore through a function.
+
 ## Data model
 
 ```

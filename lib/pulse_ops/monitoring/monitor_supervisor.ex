@@ -61,7 +61,7 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
   end
 
   @down_timeout_ms 5_000
-  @unregister_attempts 20
+  @unregister_attempts 100
 
   # The process dying is an event, so wait for the event. This used to be part
   # of a loop that slept in 10 ms steps for up to half a second.
@@ -75,10 +75,14 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
 
   # The registry's cleanup is not our event to wait for: it drops its entry when
   # *it* handles the `:DOWN`, in its own process, and there is no message to
-  # subscribe to for that. Once `await_down/2` has returned the registry has
-  # almost always handled it too, so this normally reads the table once and
-  # returns. The yield is `Process.sleep(0)` — give up the rest of this slice
-  # rather than idle for a fixed period.
+  # subscribe to for that. So this half stays a bounded poll — but only this
+  # half, and it almost always reads the table once and returns, because
+  # `await_down/2` has already waited out the part that actually takes time.
+  #
+  # `Process.sleep(0)` was tried here and is not enough: yielding the scheduler
+  # slice does not guarantee the registry has run, and 20 yields would sometimes
+  # elapse with the name still held — which then failed the next
+  # `start_monitor/1` with `{:already_started, <dead pid>}`.
   defp await_unregistered(service_id, attempts \\ @unregister_attempts)
   defp await_unregistered(_service_id, 0), do: :ok
 
@@ -88,7 +92,7 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
         :ok
 
       _pid ->
-        Process.sleep(0)
+        Process.sleep(1)
         await_unregistered(service_id, attempts - 1)
     end
   end

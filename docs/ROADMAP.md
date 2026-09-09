@@ -251,7 +251,7 @@ Make the system survive realistic data and observe itself.
 - [x] **F7** Propagate rule changes without restarting processes:
       `GenServer.cast({:rule_changed, rule})` instead of restart, and
       `Process.monitor` instead of `Process.sleep`
-- [ ] Extract the status state machine (`next_status/3`, `tally/2`) from
+- [x] Extract the status state machine (`next_status/3`, `tally/2`) from
       `ServiceMonitor` into a pure module, and property-test it with StreamData:
       *no sequence of probe outcomes produces two open incidents*
 - [ ] `mix test --cover` with a threshold in CI
