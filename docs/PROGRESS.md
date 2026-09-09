@@ -369,9 +369,9 @@ standing, and a real recover-then-break-again cycle not being suppressed.
 - A broadcast now schedules a deferred `:reload` and sets `reload_pending?`;
   anything arriving while one is pending is absorbed by it. A burst of ten
   messages costs one reload instead of ten.
-- `:dashboard_debounce_ms` is 250 in production. In the suite it is **0**, which
-  sends `:reload` straight to the mailbox rather than through a zero timer, so a
-  test can render immediately after a broadcast without racing.
+- `:dashboard_debounce_ms` is 250 in production. In the suite it is **0**, and a
+  window of zero re-reads inside the broadcast callback rather than deferring at
+  all — see the trap about `send(self(), ...)` landing behind a queued call.
 - The debounce is trailing-edge, so a status change takes up to 250 ms longer to
   appear. The README's "nothing polls" claim now says so.
 - **Only the cheap half of F4.** The queries themselves still aggregate raw
@@ -462,6 +462,12 @@ unique index (ADR-004) is already what makes the clustering step safe.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
+- **`send(self(), msg)` does not jump the queue.** The dashboard debounce first
+  deferred with `send(self(), :reload)` when the window was zero, on the theory
+  that a mailbox delivery beats a timer. It does, but the reload message is
+  appended *behind* a `render` call already sitting in the mailbox, so a test
+  rendering right after a broadcast intermittently saw the previous state. A
+  zero window now re-reads inside the callback and defers nothing.
 - `Float.round/2` rejects integers. Plot coordinates land on whole numbers often
   enough that the chart crashed on any real data; `round2/1` coerces first. The
   LiveView tests missed it because none of them rendered a service that had

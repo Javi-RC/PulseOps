@@ -73,13 +73,16 @@ defmodule PulseOpsWeb.DashboardLive do
 
   defp schedule_reload(socket) do
     case debounce_ms() do
-      # Deliver straight to the mailbox rather than through a zero timer, so a
-      # test that renders immediately afterwards cannot race the reload.
-      0 -> send(self(), :reload)
-      ms -> Process.send_after(self(), :reload, ms)
-    end
+      # No window: re-read inside this callback. Deferring by a message instead
+      # would land behind a render call already sitting in the mailbox, which is
+      # a race for anything observing the page right after a broadcast.
+      ms when ms <= 0 ->
+        load_dashboard(socket)
 
-    assign(socket, :reload_pending?, true)
+      ms ->
+        Process.send_after(self(), :reload, ms)
+        assign(socket, :reload_pending?, true)
+    end
   end
 
   defp debounce_ms, do: Application.get_env(:pulse_ops, :dashboard_debounce_ms, 250)
