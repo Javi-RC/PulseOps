@@ -184,6 +184,75 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       assert html =~ "must be shorter than the check interval"
     end
 
+    test "turns the header textarea into a map", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      assert {:ok, _live, _html} =
+               live
+               |> form("#service-form",
+                 service:
+                   Map.merge(@create_attrs, %{
+                     http_method: :post,
+                     request_headers_text: "Authorization: Bearer token\nX-Probe: pulseops\n\n",
+                     request_body: ~s({"ping":true}),
+                     expected_status: 204,
+                     body_assertion: ~s("status":"ok")
+                   })
+               )
+               |> render_submit()
+               |> follow_redirect(conn, services_path(scope))
+
+      service = Monitoring.list_services(scope) |> List.first()
+
+      assert service.request_headers == %{
+               "Authorization" => "Bearer token",
+               "X-Probe" => "pulseops"
+             }
+
+      assert service.http_method == :post
+      assert service.expected_status == 204
+      assert service.body_assertion == ~s("status":"ok")
+    end
+
+    test "shows the stored headers back as text when editing", %{conn: conn, scope: scope} do
+      service =
+        service_fixture(scope, %{
+          request_headers: %{"X-Probe" => "pulseops", "Authorization" => "Bearer token"}
+        })
+
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit")
+
+      # Sorted, so editing does not reshuffle the lines under the cursor.
+      assert html =~ "Authorization: Bearer token\nX-Probe: pulseops"
+    end
+
+    test "reports a header the form could not make sense of", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      html =
+        live
+        |> form("#service-form",
+          service: Map.put(@create_attrs, :request_headers_text, "this is not a header")
+        )
+        |> render_change()
+
+      assert html =~ "header name may only contain"
+    end
+
+    test "reports a body assertion on a HEAD request", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      html =
+        live
+        |> form("#service-form",
+          service: Map.merge(@create_attrs, %{http_method: :head, body_assertion: "ok"})
+        )
+        |> render_change()
+
+      assert html =~ "HEAD request, which has no body"
+    end
+
     test "edits a service", %{conn: conn, scope: scope} do
       service = service_fixture(scope)
 

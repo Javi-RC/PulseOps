@@ -125,6 +125,11 @@ defmodule PulseOps.MixProject do
         # routed outside development.
         PulseOpsWeb.Flaky,
         PulseOpsWeb.FlakyController,
+        # Runs only inside a release, where Mix and ExUnit do not exist. It
+        # starts and stops the repository outside the Ecto sandbox, which the
+        # suite cannot do without fighting itself; it is verified by building
+        # the production image and migrating a real database.
+        PulseOps.Release,
         # Generated shells carrying no logic of ours.
         PulseOpsWeb.Gettext,
         PulseOps.Repo,

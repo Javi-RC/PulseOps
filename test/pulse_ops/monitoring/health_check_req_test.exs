@@ -67,4 +67,101 @@ defmodule PulseOps.Monitoring.HealthCheck.ReqTest do
       assert {:ok, %Result{http_status: 200}} = Client.check("https://8.8.8.8/health")
     end
   end
+
+  describe "request options" do
+    test "sends the configured method" do
+      stub(fn conn -> Plug.Conn.send_resp(conn, 200, conn.method) end)
+
+      assert {:ok, %Result{}} = Client.check("https://8.8.8.8/health", method: :head)
+      assert {:ok, %Result{}} = Client.check("https://8.8.8.8/health", method: :post)
+    end
+
+    test "sends the configured headers" do
+      test_pid = self()
+
+      stub(fn conn ->
+        send(test_pid, {:headers, conn.req_headers})
+        Plug.Conn.send_resp(conn, 200, "ok")
+      end)
+
+      assert {:ok, _result} =
+               Client.check("https://8.8.8.8/health",
+                 headers: [{"authorization", "Bearer sekret"}, {"x-probe", "pulseops"}]
+               )
+
+      assert_receive {:headers, headers}
+      assert {"authorization", "Bearer sekret"} in headers
+      assert {"x-probe", "pulseops"} in headers
+    end
+
+    test "sends a request body when there is one" do
+      test_pid = self()
+
+      stub(fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:body, body})
+        Plug.Conn.send_resp(conn, 200, "ok")
+      end)
+
+      assert {:ok, _result} =
+               Client.check("https://8.8.8.8/health", method: :post, body: ~s({"ping":true}))
+
+      assert_receive {:body, ~s({"ping":true})}
+    end
+  end
+
+  describe "expected_status" do
+    test "a status other than the expected one fails, even a 2xx" do
+      stub(fn conn -> Plug.Conn.send_resp(conn, 200, "ok") end)
+
+      assert {:error, %Result{http_status: 200, error: error}} =
+               Client.check("https://8.8.8.8/health", expected_status: 204)
+
+      assert error =~ "expected HTTP status 204, got 200"
+    end
+
+    test "a non-2xx passes when that is what was asked for" do
+      # An endpoint that proves it is alive by refusing an unauthenticated
+      # request is a real health check, and a bare 2xx rule cannot express it.
+      stub(fn conn -> Plug.Conn.send_resp(conn, 401, "unauthorized") end)
+
+      assert {:ok, %Result{http_status: 401}} =
+               Client.check("https://8.8.8.8/health", expected_status: 401)
+    end
+
+    test "without it, any 2xx is still healthy" do
+      stub(fn conn -> Plug.Conn.send_resp(conn, 204, "") end)
+
+      assert {:ok, %Result{http_status: 204}} = Client.check("https://8.8.8.8/health")
+    end
+  end
+
+  describe "body_assertion" do
+    test "catches a service that is up and saying it is not well" do
+      # The failure a status code cannot see.
+      stub(fn conn -> Plug.Conn.send_resp(conn, 200, ~s({"status":"degraded"})) end)
+
+      assert {:error, %Result{http_status: 200, error: error}} =
+               Client.check("https://8.8.8.8/health", body_assertion: ~s("status":"ok"))
+
+      assert error =~ "did not contain"
+    end
+
+    test "passes when the text is there" do
+      stub(fn conn -> Plug.Conn.send_resp(conn, 200, ~s({"status":"ok","db":"up"})) end)
+
+      assert {:ok, %Result{http_status: 200}} =
+               Client.check("https://8.8.8.8/health", body_assertion: ~s("status":"ok"))
+    end
+
+    test "an unexpected status is reported as such, not as a missing string" do
+      stub(fn conn -> Plug.Conn.send_resp(conn, 503, "") end)
+
+      assert {:error, %Result{error: error}} =
+               Client.check("https://8.8.8.8/health", body_assertion: "ok")
+
+      assert error =~ "unexpected HTTP status 503"
+      refute error =~ "did not contain"
+    end
+  end
 end

@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) complete — scale and visibility (v0.4.0) |
-| Next | Phase 3 of [`ROADMAP.md`](ROADMAP.md) — product surface |
-| Checks | `mix check` green: 470 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/product-surface` |
+| Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) complete — product surface |
+| Next | Phase 4 of [`ROADMAP.md`](ROADMAP.md) — operational reliability |
+| Checks | `mix check` green: 600 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -610,6 +610,180 @@ label anywhere in the output.
   a private target is refused **without any request being attempted**.
 
 
+### Phase 3 — public status page
+
+- `/status/:slug`, unauthenticated, live over the same PubSub topics the
+  signed-in dashboard uses. The roadmap's star feature: it turns "I watch my
+  services" into "my customers watch my services", and it is what makes the
+  project demonstrable without handing anyone credentials.
+- **All unauthenticated reads live in `PulseOps.StatusPage`.** Everywhere else a
+  context function takes a `%Scope{}` whose holder got through
+  `on_mount :require_organization`; this breaks that on purpose, so it is one
+  file to review rather than `public_`-prefixed functions sitting next to scoped
+  ones. See **ADR-011**.
+- **The queries name their columns.** A service's `url` is usually an internal
+  hostname — it is why `UrlGuard` exists — and an incident's `cause` and timeline
+  are written by staff for staff. None are fetched at all, so the guarantee is
+  not "the template does not render it" and cannot be undone by editing markup.
+- **Two flags, because they answer different questions.**
+  `organizations.status_page_enabled` is off until somebody turns it on;
+  `services.public` defaults to **true**, because publishing a page is a
+  statement about what you are watching and a page that starts empty reads as
+  broken rather than as careful.
+- An organization that has not published is **indistinguishable from one that
+  does not exist** — both 404 — so the page cannot be used to find out who has
+  an account here.
+- `Scope.for_public_organization/1` carries the organization with no user and no
+  role, so the existing read functions filter by tenant exactly as for a member
+  while `Organizations.can?/2` denies every action. The visitor goes through the
+  same authorization code path, not a parallel one.
+- Published from organization settings, with its own form. The handler takes
+  only the two status page fields, so the control cannot become a second way to
+  rename the organization or move its slug — there is a test that tries.
+
+**Verified against the running app** with `priv/scenarios/status_page.exs`: 404
+before publishing and for a slug that never existed, the public service listed
+and the held-back one absent, and neither the service URL, its hostname, a member
+email, nor the incident cause anywhere in the HTML.
+
+
+### Phase 3 — F9: deployable for real
+
+- **`Dockerfile`** (production) beside the existing `Dockerfile.dev`: a two-stage
+  `mix release` shipped on a runtime with no Mix, no build tools and no source,
+  running as a non-root user. 296 MB.
+- **`PHX_HOST` is mandatory.** It defaulted to `"example.com"`, which booted
+  happily and put a hostname nobody owns into every generated link — magic-link
+  logins, and the incident URLs in webhook and email notifications. The release
+  now refuses to boot without it, with a message saying what it is for.
+- **`bin/migrate` and `bin/server` are separate entry points.** Migrating on
+  boot races every other replica starting at the same moment. `PulseOps.Release`
+  is the eval target, because `mix ecto.migrate` does not exist in a release.
+- `DATABASE_SSL` defaults to **true** with `verify_peer` against the OS CA
+  bundle; `false` is the deliberate opt-out for a database on a private network.
+- **`force_ssl` was already enabled** in `config/prod.exs` — the roadmap's F9
+  claim that it was still commented out is wrong. What is commented out is the
+  explanatory block in `runtime.exs`. Verified in the running image: HTTP gets a
+  301 to HTTPS and served responses carry HSTS.
+- The **one-node deployment constraint** is now written down in
+  `ARCHITECTURE.md` and the README, which the roadmap asked for explicitly:
+  every node starts a monitor for every service, so a second replica duplicates
+  probes, checks and notifications.
+
+**Verified by building and running the image**, which is the only way any of
+this can be verified: migrations applied to a fresh database from the release,
+the server booted, HTTP redirected to HTTPS, HSTS present, `/metrics` 401 then
+200 with its token, assets served digested and gzipped, `whoami` is `pulseops`,
+and `mix` is absent from the image.
+
+
+### Phase 3 — configurable checks
+
+- A probe was `Req.get(url)` with no options, so PulseOps could only watch
+  endpoints that are public, answer GET, and say everything they mean in the
+  status line. A service now carries `http_method`, `request_headers`,
+  `request_body`, `expected_status` and `body_assertion`.
+- **Every column defaults to the old hardcoded behaviour**, so an existing
+  service is probed exactly as before.
+- `expected_status` null means any 2xx; an integer means exactly that, which is
+  how you watch an endpoint whose healthy answer is a 204, or one that proves it
+  is alive by answering 401.
+- **`body_assertion` is the point of the whole item.** It catches a service that
+  is up, answering 200, and saying in its payload that it is not well — the
+  failure a status code cannot see. Checked *after* the status, so a 503 is
+  reported as a bad status rather than as a missing string.
+- Methods are GET, HEAD and POST. PUT, PATCH and DELETE are deliberately absent:
+  nothing that changes state on the far side belongs on a schedule.
+- **Header injection is rejected in the changeset.** A line break in either half
+  of a header lets a tenant append headers of their own to a request PulseOps
+  makes on their behalf. Names must also be RFC tokens, which is what turns a
+  line the form could not parse into "that is not a header name". Count, length
+  and a HEAD-with-body-assertion contradiction are checked too.
+- Headers are a textarea of `Name: value` lines, parsed into a map at the form
+  boundary — the same place the seconds-to-milliseconds conversion happens. A
+  map is not something an HTML form can post, and a repeating-row widget is a
+  lot of machinery for something everyone can already read.
+- **A header value is stored as written**, so a token sits in the database in
+  plain text exactly like `notifiers.secret_token` does. That is the same known
+  P2 debt, now with a second place to fix; the form says so.
+
+**Verified against the running app** with
+`priv/scenarios/configurable_checks.exs`, including the case that matters: a
+service pointed at `/dev/flaky`, which answers **200**, is correctly reported
+**down** because the body does not contain what the service requires.
+
+
+### Phase 3 — JSON API with organization tokens
+
+- `pipeline :api` had been declared and unused since bootstrap. Behind it now:
+  services (list, show, create, update, delete) and incidents (list, show,
+  workflow update, resolve) at `/api/v1`.
+- **The API restates no authorization.** A token produces a `%Scope{}`, and the
+  controllers call the same context functions the LiveViews call, so every
+  tenant filter and role check applies unchanged. The SSRF guard, the
+  alert-rule tenancy check and the "resolving is not a workflow status" rule all
+  hold over HTTP without being mentioned there. See **ADR-012**.
+- **A token has no permissions of its own.** It names the person who created it
+  and takes its role from their membership *at request time*, so it can never
+  outrank its owner, weakens when they are demoted, and stops working entirely
+  when they leave the organization. There is a test for each.
+- **Only the hash is stored.** The token is shown once and cannot be recovered —
+  unlike `notifiers.secret_token`, which is kept in the clear because it has to
+  be *sent* on every delivery. Recognising something needs no more than its hash.
+- Missing, malformed, unknown and revoked tokens all answer 401 with the same
+  body, and another tenant's id answers 404 rather than 403: either distinction
+  would confirm something exists.
+- **The API found a latent bug.** `resolve_incident/3` did
+  `Map.put(attrs, :resolved_by_id, ...)`, which produced a map of mixed atom and
+  string keys as soon as the attrs came from JSON. It never showed through the
+  LiveView, which passes an empty map. `resolved_by_id` is now `put_change`d
+  rather than cast — which is also what the project's own convention says about
+  fields set programmatically.
+- `PulseOps.Accounts.User` gained `@type t`, which every other schema already
+  had; without it a `@spec` naming it failed Dialyzer with `unknown_type`.
+
+**Verified against the running app** with `priv/scenarios/json_api.exs`, over
+real HTTP with a real token: 401 unauthenticated, 201 on create, 422 carrying
+the SSRF guard's own message, 404 for another tenant, resolve credited to the
+token's owner, 409 on a second resolve, a demoted owner's token reading but not
+writing, and 401 the moment it is revoked.
+
+
+### Phase 3 — email invitations
+
+- `add_member/3` could only add somebody already registered, and its own `@doc`
+  said so while the README promised "invite people". Invitations close that gap.
+- **One field does both.** The members page adds whoever already has an account
+  and invites whoever does not, which is what it should have done from the start
+  — the old copy said "the person must already have a PulseOps account", a dead
+  end at exactly the moment somebody is bringing a colleague in.
+- **Accepting creates the account, confirms it, adds the membership and signs
+  them in**, in one transaction. Holding the link proves control of the mailbox,
+  which is precisely what the magic-link login already accepts as proof — so
+  making the invitee register, log in, and find the invitation again would be
+  three steps proving nothing the first click had not. See **ADR-013**.
+- **Accepting is a POST, and this is the part that matters.** A `GET` is followed
+  by mail scanners, link-rewriting proxies and browser prefetchers, none of which
+  asked to join anything. The page offers; the form accepts. The scenario checks
+  exactly this: fetching the page creates no account.
+- Single use, expires in 7 days, stored only as a hash. Re-inviting replaces the
+  pending link rather than leaving two live ones.
+- **Expired, accepted, withdrawn and unknown tokens all render the same page**,
+  because saying which would report whether an address had ever been invited.
+- Somebody added by hand between the invitation being sent and opened is not an
+  error: the invitation is spent and they are let in with the membership they
+  already have.
+- The email goes through `PulseOps.Mailer`, not `Notifications.Mailer`: an
+  invitation is account correspondence, not an incident alert, and has to work
+  whether or not a tenant has configured a provider.
+
+**Verified against the running app** with `priv/scenarios/invitations.exs`, over
+real HTTP and driving the form the way a browser does, CSRF token and session
+cookie included: the page readable with no session, **fetching it creating no
+account**, the POST creating a confirmed account and a membership, and a second
+POST refused.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -702,6 +876,21 @@ unique index (ADR-004) is already what makes the clustering step safe.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
+- **Registering a user already creates their personal organization**, whose slug
+  comes from the email local part. A scenario script that registers
+  `checks-123@…` and then creates an organization named `Checks 123` collides
+  with it, because both slugify to `checks-123`.
+- **A release ships the builder's ERTS, so the two Docker stages must agree on
+  their Debian.** Building on `elixir:1.20-otp-28` (trixie, glibc 2.41) and
+  running on `debian:bookworm-slim` (glibc 2.36) produced an image that built
+  cleanly and died on boot with `libm.so.6: version GLIBC_2.38 not found`. The
+  Dockerfile comment warned about exactly this and the first version did it
+  anyway — which is why the image is booted as part of the check, not assumed.
+- **`rel/overlays` only reaches the release if `rel/` is in the build context.**
+  Without `COPY rel rel` the image builds fine and `bin/server` and
+  `bin/migrate` simply are not in it.
+- **Git Bash rewrites container paths.** `docker run ... /app/bin/migrate`
+  becomes `C:/Program Files/Git/app/bin/migrate`. `MSYS_NO_PATHCONV=1` stops it.
 - **`mix run` starts the endpoint but does not listen.** Only `mix phx.server` or
   `PHX_SERVER=true` makes it serve. A scenario script probing the app's own
   `/dev/flaky` under plain `mix run` gets "connection refused" on every probe,

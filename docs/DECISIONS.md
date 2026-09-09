@@ -211,6 +211,167 @@ Without it, every finished hour would simply be missing from the dashboard.
 
 ---
 
+## ADR-011 — Unauthenticated reads live in one context, and select their columns
+
+**Decision.** The public status page reads through `PulseOps.StatusPage`, a
+context of its own, and nowhere else. Its queries name the columns they return
+rather than loading schemas. An organization publishes nothing until
+`status_page_enabled` is set, and a service appears only while its own `public`
+flag is set. `Scope.for_public_organization/1` builds a scope carrying the
+organization with no user and no role, so the existing read functions filter by
+tenant exactly as they do for a member while `Organizations.can?/2` denies
+every action.
+
+**Why a separate context.** Everywhere else, a context function takes a
+`%Scope{}` whose holder got through `on_mount :require_organization`. That is
+the property the whole tenancy design rests on (ADR-001), and the status page
+breaks it on purpose: anybody with a URL can call these functions. Spreading
+that exception through `Monitoring` and `Incidents` as `public_`-prefixed
+functions would put unauthenticated reads next to authenticated ones, where the
+next person to add a function has to notice which kind they are writing. One
+module is one file to review, and its name says what it is.
+
+**Why the queries select columns.** A service's `url` is frequently an internal
+hostname — it is the reason `UrlGuard` exists. An incident's `cause` and its
+timeline are written by staff for staff. If those columns were loaded and simply
+not rendered, the guarantee would live in a template, and templates get edited
+by people who did not read this file. Not fetching them means no future markup
+change can leak one, and the test that asserts it is checking something the
+database enforces rather than something the current markup happens to do.
+
+**Why two flags.** They answer different questions. `status_page_enabled` is
+"does this organization publish at all", and it is off until somebody turns it
+on. `services.public` is "does this service belong on the page", and it defaults
+to **true**, because turning the page on is a statement about the things you are
+watching; a page that starts empty and needs every service ticked reads as
+broken rather than as careful. The URL is withheld either way, so the default
+discloses a name and a status, not an address.
+
+**Rejected.** *One organization-level flag only.* It forces a tenant watching
+both a public API and an internal admin host to choose between publishing both
+or neither.
+
+*Defaulting `services.public` to false.* Safer in the abstract, and it makes
+enabling the page look broken, which in practice means people leave it off.
+
+*Reusing `list_services/1` and `list_incidents/2` with a synthetic scope.* It
+works — the scope is only read for its organization id — and it would return
+full schema structs with `url` and `cause` loaded, putting the guarantee back
+into the templates.
+
+**Consequence.** An organization that has not published is indistinguishable
+from one that does not exist: both raise `StatusPageLive.NotFound` and answer
+404. The page cannot be used to discover who has an account here.
+
+---
+
+## ADR-012 — The API is a second way in, not a second domain
+
+**Decision.** A token authenticates by producing a `%Scope{}`, and every API
+controller then calls the same context function a LiveView calls. There is no
+authorization logic in `PulseOpsWeb.Api`: the tenant filter and the role check
+are already inside `Monitoring` and `Incidents`, and they apply because the
+scope is the same shape.
+
+A token names the **person** who created it and carries no role of its own. The
+role is read from that person's membership at request time.
+
+Only the hash is stored. The token is shown once, at creation, and cannot be
+recovered.
+
+**Why the scope.** `pipeline :api` had been declared and unused since bootstrap,
+and the tempting thing to write behind it is a set of `api_`-prefixed context
+functions. That is how two halves of an application drift: a rule gets added to
+one and forgotten in the other, and the one that gets forgotten is the one
+without a UI to notice it. Because tenancy and roles were already parameters of
+the domain rather than properties of a session (ADR-001), an API needed no new
+rules at all — which is the thing worth having proved. The SSRF guard, the
+alert-rule tenancy check, the "resolving is not a workflow status" rule: all of
+them apply over HTTP without being mentioned there.
+
+**Why a token has no role of its own.** A token with independently settable
+permissions is a second permission system, and it outlives the reason it was
+granted — the classic form being a token that still works long after the person
+who made it left. Reading the role from the owner's membership on each request
+means a token can never outrank its owner, loses power the moment they are
+demoted, and stops working entirely when they leave.
+
+**Why only the hash.** A token here only has to be *recognised*, and recognising
+something needs no more than its hash. This is deliberately unlike
+`notifiers.secret_token`, which is stored in the clear because it has to be
+*sent* on every delivery — a different requirement, not a different standard.
+
+**Rejected.** *Tokens with their own role or scopes.* More flexible, and a
+second thing to keep in agreement with membership. Worth revisiting only when
+somebody actually needs a token weaker than its owner.
+
+*Organization-wide tokens belonging to nobody.* Simpler, and then a resolved
+incident has no author — `resolved_by_id` would be null for every API action,
+and the timeline would stop distinguishing "the monitor saw this" from
+"somebody did this", which is the whole point of that column (ADR-008).
+
+*Deleting a revoked token's row.* Keeping it means a token that turns up in a
+log later can still be identified as one already dealt with.
+
+**Consequence.** A missing, malformed, unknown and revoked token all answer 401
+with the same body: distinguishing them would say whether a token had ever
+existed. Another tenant's id answers 404 rather than 403, for the same reason.
+
+---
+
+## ADR-013 — An invitation is a login that also grants a membership
+
+**Decision.** `add_member/3` could only add somebody who had already registered.
+Invitations cover the case it could not: an address with no account here. The
+link is emailed, stored only as a hash, single use, and expires in seven days.
+
+Accepting **creates the account if there is none, confirms it, adds the
+membership and signs the person in** — all in one transaction. The invitation
+page is public and only *offers* to accept; accepting is a `POST`.
+
+**Why accepting can create and sign in.** This application already treats
+control of a mailbox as proof of identity: that is exactly what the magic-link
+login is. An invitation link is delivered to one address and proves the same
+thing, so making the invited person register separately — and then log in, and
+then find the invitation again — would be three steps that prove nothing the
+first click had not already proved. Confirming the account on the spot follows
+for the same reason.
+
+**Why accepting is a POST.** A `GET` is followed by mail scanners, corporate
+link-rewriting proxies and browser prefetchers, none of which asked to join
+anything. A link that acted on being fetched would produce memberships nobody
+consented to, and would burn the invitation before its recipient ever saw it.
+The page offers; the form accepts. `phx.gen.auth` confirms accounts the same
+way, for the same reason.
+
+**Why one field does both.** The members page used to say "the person must
+already have a PulseOps account", which is a dead end at exactly the moment
+somebody is trying to bring a colleague in. It now adds whoever is already
+registered and invites whoever is not, which is what the README had been
+claiming all along.
+
+**Rejected.** *Making the invitee register first and then redeem.* More
+conventional, and it fails the most common case — the person clicks the link,
+finds a registration form, and has no idea the two are connected.
+
+*Storing the token in the clear.* There is no reason: it only has to be
+recognised, like the API tokens (ADR-012).
+
+*Letting an invitation be accepted by whoever is signed in.* An invitation is
+addressed to an address. Binding it to the email means a forwarded link cannot
+quietly add the wrong account.
+
+**Consequence.** An expired, accepted, withdrawn and unknown token all render
+the same page, because saying which would report whether an address had ever
+been invited. Re-inviting replaces the pending invitation rather than leaving
+two live links.
+
+Somebody added by hand between the invitation being sent and opened is not an
+error: the invitation is spent and they are let in with the membership they
+already have.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

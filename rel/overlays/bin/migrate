@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+# Runs pending migrations and exits. Deliberately a separate step from starting
+# the server: a container that migrates on boot races every other replica that
+# starts at the same moment.
+cd -P -- "$(dirname -- "$0")"
+./pulse_ops eval "PulseOps.Release.migrate()"

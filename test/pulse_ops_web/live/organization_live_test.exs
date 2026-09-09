@@ -2,6 +2,7 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
   use PulseOpsWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
+  import Swoosh.TestAssertions
   import PulseOps.AccountsFixtures
   import PulseOps.OrganizationsFixtures
 
@@ -48,12 +49,86 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
     end
   end
 
+  describe "publishing the status page" do
+    test "the toggle publishes it and offers the link", %{conn: conn, scope: scope} do
+      {:ok, live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+      refute html =~ "View the page"
+
+      html =
+        live
+        |> form("#status-page-form",
+          organization: %{status_page_enabled: "true", status_page_headline: "We watch things"}
+        )
+        |> render_submit()
+
+      assert html =~ "Status page published"
+      assert html =~ "View the page"
+
+      organization = Repo.reload!(scope.organization)
+      assert organization.status_page_enabled
+      assert organization.status_page_headline == "We watch things"
+    end
+
+    test "turning it off takes it down", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+
+      live
+      |> form("#status-page-form", organization: %{status_page_enabled: "true"})
+      |> render_submit()
+
+      html =
+        live
+        |> form("#status-page-form", organization: %{status_page_enabled: "false"})
+        |> render_submit()
+
+      assert html =~ "Status page taken down"
+      refute Repo.reload!(scope.organization).status_page_enabled
+    end
+
+    test "the toggle cannot be used to rename the organization", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+
+      # A crafted submit carrying fields this control has no business changing.
+      live
+      |> render_submit("save_status_page", %{
+        "organization" => %{
+          "status_page_enabled" => "true",
+          "name" => "Hijacked",
+          "slug" => "hijacked"
+        }
+      })
+
+      organization = Repo.reload!(scope.organization)
+      assert organization.status_page_enabled
+      refute organization.name == "Hijacked"
+      refute organization.slug == "hijacked"
+    end
+
+    test "a viewer cannot publish it", %{conn: conn, scope: scope, user: user} do
+      # Demoted before mounting, because the scope is built at mount: a role
+      # change mid-session does not reach a socket that is already open.
+      demote_to_viewer(scope, user)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+
+      html =
+        live
+        |> form("#status-page-form", organization: %{status_page_enabled: "true"})
+        |> render_submit()
+
+      assert html =~ "do not have permission"
+      refute Repo.reload!(scope.organization).status_page_enabled
+    end
+  end
+
   describe "organization settings" do
     test "renames the organization", %{conn: conn, scope: scope} do
       {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
 
       live
-      |> form("form", organization: %{name: "Renamed", slug: scope.organization.slug})
+      |> form("#organization-form",
+        organization: %{name: "Renamed", slug: scope.organization.slug}
+      )
       |> render_submit()
 
       assert Repo.reload!(scope.organization).name == "Renamed"
@@ -76,11 +151,21 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
 
       html =
         live
-        |> form("form", organization: %{name: "Nope", slug: scope.organization.slug})
+        |> form("#organization-form",
+          organization: %{name: "Nope", slug: scope.organization.slug}
+        )
         |> render_submit()
 
       assert html =~ "do not have permission"
       refute Repo.reload!(scope.organization).name == "Nope"
+    end
+  end
+
+  defp drain_emails do
+    receive do
+      {:email, _email} -> drain_emails()
+    after
+      0 -> :ok
     end
   end
 
@@ -117,15 +202,45 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
       assert Organizations.get_membership(scope.organization, colleague).role == :member
     end
 
-    test "says so when the address has no account", %{conn: conn, scope: scope} do
+    test "invites an address that has no account yet", %{conn: conn, scope: scope} do
       {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/members")
+
+      # The login link the setup sent is still sitting in the mailbox.
+      drain_emails()
 
       html =
         live
         |> form("form[phx-submit=add]", member: %{email: "nobody@example.com", role: "member"})
         |> render_submit()
 
-      assert html =~ "No account is registered with that email address"
+      # One field does both: add whoever is already here, invite whoever is not.
+      assert html =~ "Invitation sent to nobody@example.com"
+      assert html =~ "Waiting to be accepted"
+
+      assert [invitation] = Organizations.list_pending_invitations(scope)
+      assert invitation.email == "nobody@example.com"
+      assert invitation.role == :member
+
+      assert_email_sent(fn email ->
+        assert email.to == [{"", "nobody@example.com"}]
+        assert email.subject =~ scope.organization.name
+        assert email.text_body =~ "/invitations/"
+      end)
+    end
+
+    test "withdrawing an invitation stops its link working", %{conn: conn, scope: scope} do
+      {:ok, _invitation, token} =
+        Organizations.invite_member(scope, "nobody@example.com", :member)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/members")
+
+      html =
+        live
+        |> element(~s(button[phx-click="withdraw"]))
+        |> render_click()
+
+      assert html =~ "withdrawn"
+      assert Organizations.fetch_invitation(token) == {:error, :invalid_invitation}
     end
 
     test "changes a role", %{conn: conn, scope: scope} do

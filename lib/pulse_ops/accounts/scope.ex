@@ -35,6 +35,19 @@ defmodule PulseOps.Accounts.Scope do
   def for_user(nil), do: nil
 
   @doc """
+  A scope for an anonymous visitor to an organization's public status page.
+
+  It carries the organization so the existing read functions filter by tenant
+  exactly as they do for a signed-in user, and carries no user and no role, so
+  `Organizations.can?/2` denies every action — a visitor can be shown things and
+  can do nothing. That is the whole difference between this and a real session,
+  and it is enforced by the same code path rather than by a parallel one.
+  """
+  def for_public_organization(%Organization{} = organization) do
+    %__MODULE__{user: nil, organization: organization, role: nil}
+  end
+
+  @doc """
   Narrows the scope to one organization and the caller's role in it.
 
   Contexts filter every query by `scope.organization.id`, so a scope without an

@@ -533,6 +533,108 @@ defmodule PulseOps.MonitoringTest do
     end
   end
 
+  describe "check request options" do
+    setup do
+      %{scope: organization_scope_fixture()}
+    end
+
+    defp create(scope, attrs) do
+      Monitoring.create_service(scope, valid_service_attributes(attrs))
+    end
+
+    test "defaults keep an existing service probed exactly as before", %{scope: scope} do
+      assert {:ok, service} = create(scope, %{})
+
+      assert service.http_method == :get
+      assert service.request_headers == %{}
+      assert service.expected_status == nil
+      assert service.body_assertion == nil
+    end
+
+    test "accepts a method, headers, an expected status and a body assertion", %{scope: scope} do
+      assert {:ok, service} =
+               create(scope, %{
+                 http_method: :post,
+                 request_headers: %{"authorization" => "Bearer token"},
+                 request_body: ~s({"ping":true}),
+                 expected_status: 204,
+                 body_assertion: ~s("status":"ok")
+               })
+
+      assert service.http_method == :post
+      assert service.request_headers == %{"authorization" => "Bearer token"}
+      assert service.expected_status == 204
+    end
+
+    test "rejects a header carrying a line break", %{scope: scope} do
+      # Header injection: a newline in either half lets a tenant append headers
+      # of their own to a request PulseOps makes on their behalf.
+      assert {:error, changeset} =
+               create(scope, %{
+                 request_headers: %{"x-probe" => "ok\r\nX-Injected: yes"}
+               })
+
+      assert "a header cannot contain a line break" in errors_on(changeset).request_headers
+
+      assert {:error, changeset} =
+               create(scope, %{request_headers: %{"x-probe\nX-Injected" => "yes"}})
+
+      assert "a header cannot contain a line break" in errors_on(changeset).request_headers
+    end
+
+    test "rejects a header with no name", %{scope: scope} do
+      assert {:error, changeset} = create(scope, %{request_headers: %{"" => "orphan"}})
+      assert "every header needs a name" in errors_on(changeset).request_headers
+    end
+
+    test "drops a row where both halves are blank", %{scope: scope} do
+      # An empty pair is what a form row the user never filled in looks like.
+      assert {:ok, service} =
+               create(scope, %{request_headers: %{"x-probe" => "yes", "" => ""}})
+
+      assert service.request_headers == %{"x-probe" => "yes"}
+    end
+
+    test "refuses to be used as storage", %{scope: scope} do
+      too_many = Map.new(1..11, fn n -> {"x-#{n}", "value"} end)
+
+      assert {:error, changeset} = create(scope, %{request_headers: too_many})
+      assert "cannot have more than 10 headers" in errors_on(changeset).request_headers
+
+      assert {:error, changeset} =
+               create(scope, %{request_headers: %{"x-probe" => String.duplicate("a", 201)}})
+
+      assert Enum.any?(errors_on(changeset).request_headers, &(&1 =~ "under 200 characters"))
+    end
+
+    test "rejects a status outside the HTTP range", %{scope: scope} do
+      assert {:error, changeset} = create(scope, %{expected_status: 99})
+      assert errors_on(changeset).expected_status != []
+
+      assert {:error, changeset} = create(scope, %{expected_status: 600})
+      assert errors_on(changeset).expected_status != []
+    end
+
+    test "rejects a body assertion on a HEAD request", %{scope: scope} do
+      # A HEAD response has no body by definition, so this would fail every
+      # probe for a reason the form can explain now instead.
+      assert {:error, changeset} =
+               create(scope, %{http_method: :head, body_assertion: "ok"})
+
+      assert Enum.any?(errors_on(changeset).body_assertion, &(&1 =~ "HEAD"))
+    end
+
+    test "allows HEAD with no body assertion", %{scope: scope} do
+      assert {:ok, service} = create(scope, %{http_method: :head})
+      assert service.http_method == :head
+    end
+
+    test "rejects a method that changes state on the far side", %{scope: scope} do
+      assert {:error, changeset} = create(scope, %{http_method: :delete})
+      assert errors_on(changeset).http_method != []
+    end
+  end
+
   describe "change_service/3" do
     test "returns a changeset" do
       scope = organization_scope_fixture()

@@ -318,10 +318,13 @@ defmodule PulseOps.Incidents do
 
     with :ok <- Organizations.authorize(scope, :respond_to_incidents),
          :ok <- ensure_open(incident) do
-      attrs = Map.put(attrs, :resolved_by_id, scope.user.id)
+      changeset =
+        incident
+        |> Incident.resolve_changeset(attrs)
+        |> Incident.put_resolver(scope.user.id)
 
       Multi.new()
-      |> Multi.update(:incident, Incident.resolve_changeset(incident, attrs))
+      |> Multi.update(:incident, changeset)
       |> Multi.insert(:event, fn %{incident: updated} ->
         IncidentEvent.changeset(%IncidentEvent{}, %{
           incident_id: updated.id,

@@ -41,6 +41,89 @@ Start here, in this order:
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
 4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
 
+## Deploying it
+
+`Dockerfile` builds a production image: a `mix release` on a runtime that has no
+Mix, no build tools and no source in it, running as a non-root user.
+
+```bash
+docker build -t pulseops:latest .
+
+# Migrations are their own step. A container that migrates on boot races every
+# other replica starting at the same moment.
+docker run --rm --env-file prod.env pulseops:latest /app/bin/migrate
+docker run -d -p 4000:4000 --env-file prod.env pulseops:latest
+```
+
+Required environment:
+
+| | |
+|---|---|
+| `SECRET_KEY_BASE` | signs cookies and tokens; `mix phx.gen.secret` |
+| `DATABASE_URL` | `ecto://user:pass@host/database` |
+| `PHX_HOST` | the hostname this installation answers at |
+
+`PHX_HOST` has **no default**. It ends up in every link PulseOps generates —
+magic-link logins, and the incident URLs in webhook and email notifications — so
+a wrong one produces links that silently go nowhere. The release refuses to boot
+without it.
+
+Optional: `PORT` (4000), `POOL_SIZE` (10), `DATABASE_SSL` (`true`; set `false`
+only for a database on a private network that does not speak TLS),
+`METRICS_TOKEN`, `BREVO_API_KEY` with `MAILER_FROM` and `MAILER_FROM_NAME`,
+`DNS_CLUSTER_QUERY`, `ECTO_IPV6`.
+
+HTTP is redirected to HTTPS with HSTS, trusting `x-forwarded-proto`, so put it
+behind a proxy or load balancer that terminates TLS.
+
+**One node only.** Every node starts a monitor for every enabled service, so a
+second replica duplicates probes, checks and notifications. The partial unique
+index keeps incidents from being duplicated and protects nothing else. Do not
+scale by replicas until there is leader election.
+
+## Inviting people
+
+Adding somebody on the members page adds them straight away if they already have
+an account, and emails them an invitation if they do not. The link works once,
+lasts a week, and creates their account when they accept — so a colleague needs
+nothing but the email.
+
+## JSON API
+
+Services and incidents are readable and writable over HTTP at `/api/v1`, with an
+organization token minted in **Settings → API tokens**:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://your-host/api/v1/services
+curl -H "Authorization: Bearer $TOKEN" -X POST   https://your-host/api/v1/incidents/42/resolve -d '{"cause":"restarted the pool"}'
+```
+
+A token acts as the person who created it and takes its role from their
+membership on every request, so it can never do more than they can and stops
+working when they leave the organization. Only a hash is stored — the token is
+shown once and cannot be recovered, only replaced.
+
+## Configurable checks
+
+A service says how it wants to be probed — GET, HEAD or POST, with headers and a
+body — and what counts as healthy. `expected_status` accepts an exact code, so an
+endpoint whose healthy answer is a `204`, or one that proves it is alive by
+answering `401`, can be watched. `body_assertion` requires a string in the
+response, which is the only way to catch a service that is up, answering `200`,
+and saying in its payload that its database is gone.
+
+Everything defaults to the previous behaviour: a `GET` that accepts any 2xx.
+
+## Public status page
+
+An organization can publish a page at `/status/:slug` that anyone can read
+without an account, updating live over the same WebSocket the dashboard uses.
+Service names, statuses and uptime appear on it; service URLs, incident causes
+and timelines never do, and an organization that has not published is
+indistinguishable from one that does not exist. Turn it on in organization
+settings, and exclude individual services with their "Show on the status page"
+checkbox.
+
 ## Metrics
 
 PulseOps exposes its own health to Prometheus at `/metrics`, behind a bearer

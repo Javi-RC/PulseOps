@@ -14,6 +14,8 @@ defmodule PulseOps.Organizations.Organization do
   schema "organizations" do
     field :name, :string
     field :slug, :string
+    field :status_page_enabled, :boolean, default: false
+    field :status_page_headline, :string
 
     has_many :memberships, Membership
     has_many :users, through: [:memberships, :user]
@@ -24,8 +26,9 @@ defmodule PulseOps.Organizations.Organization do
   @doc false
   def changeset(organization, attrs) do
     organization
-    |> cast(attrs, [:name, :slug])
+    |> cast(attrs, [:name, :slug, :status_page_enabled, :status_page_headline])
     |> validate_required([:name])
+    |> validate_length(:status_page_headline, max: 200)
     |> validate_length(:name, min: 2, max: 80)
     |> put_slug()
     |> validate_required([:slug])
