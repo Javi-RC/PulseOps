@@ -44,7 +44,9 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     :rule,
     status: :unknown,
     consecutive_failures: 0,
-    consecutive_successes: 0
+    consecutive_successes: 0,
+    last_check_status: nil,
+    last_error: nil
   ]
 
   ## Client
@@ -88,6 +90,24 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
   """
   def check_now(service_id), do: GenServer.cast(via(service_id), :check)
 
+  @doc """
+  Tells a monitor its alert rule may have changed, so it re-reads it.
+
+  A monitor used to be restarted for this, which meant stopping a process,
+  waiting for the registry to release its name and booting a replacement — per
+  affected service, in sequence, from whichever process saved the rule. An
+  organization-wide rule made that O(number of services) of blocking work.
+
+  A cast reaches every affected monitor without any of them waiting on each
+  other, and each re-reads its own rule in its own process.
+  """
+  def rule_changed(service_id) do
+    case whereis(service_id) do
+      nil -> :ok
+      _pid -> GenServer.cast(via(service_id), :rule_changed)
+    end
+  end
+
   ## Server
 
   @impl true
@@ -124,12 +144,39 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
        status: state.status,
        consecutive_failures: state.consecutive_failures,
        consecutive_successes: state.consecutive_successes,
-       checking?: state.task != nil
+       checking?: state.task != nil,
+       # Which rule the monitor is actually running on, which is the only way to
+       # observe that a rule change reached it.
+       failure_threshold: state.rule.failure_threshold,
+       success_threshold: state.rule.success_threshold
      }, state}
   end
 
   @impl true
   def handle_cast(:check, state), do: {:noreply, start_check(state)}
+
+  # Re-read the rule and judge what we have already seen against it, rather than
+  # waiting for the next probe. A restart used to discard the failure and
+  # success tallies and start counting again from zero, so a threshold lowered
+  # to 1 still needed a fresh probe to bite. Applying it to the counts already
+  # taken makes the change take effect immediately and keeps the information.
+  def handle_cast(:rule_changed, state) do
+    state = %{state | rule: Monitoring.rule_for_monitoring(state.service)}
+
+    case state.last_check_status do
+      nil ->
+        {:noreply, state}
+
+      check_status ->
+        next_status = next_status(state, check_status, state.rule)
+
+        if next_status == state.status do
+          {:noreply, state}
+        else
+          {:noreply, transition(state, next_status, state.last_error)}
+        end
+    end
+  end
 
   @impl true
   def handle_info(:check, state), do: {:noreply, start_check(state)}
@@ -223,6 +270,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
     check_status = check_status(result, healthy?, state.service, state.rule)
     state = tally(state, healthy?)
+    state = %{state | last_check_status: check_status, last_error: result.error}
     next_status = next_status(state, check_status, state.rule)
 
     :telemetry.execute(
@@ -241,7 +289,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
           Incidents.reconcile_incident(state.service, state.status, state.rule)
           {:ok, state}
         else
-          {:ok, transition(state, next_status, result)}
+          {:ok, transition(state, next_status, result.error)}
         end
 
       # No point recording a status for a service that no longer exists: tell the
@@ -289,7 +337,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     end
   end
 
-  defp transition(state, next_status, result) do
+  defp transition(state, next_status, reason) do
     Logger.info("service status changed",
       service_id: state.service.id,
       organization_id: state.service.organization_id,
@@ -302,7 +350,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     # Every status change passes through here, which makes it the one place the
     # incident lifecycle has to hook into.
     case {state.status, next_status} do
-      {_previous, :down} -> Incidents.open_incident(service, state.rule, result.error)
+      {_previous, :down} -> Incidents.open_incident(service, state.rule, reason)
       {:down, _recovered} -> Incidents.resolve_open_incident(service)
       {_previous, _next} -> :ok
     end

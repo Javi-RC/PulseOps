@@ -9,7 +9,7 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) — scale and visibility |
-| Next | F7 — propagate rule changes without restarting monitors |
+| Next | Extract the status state machine and property-test it |
 | Checks | `mix check` green: 450 tests, Credo `--strict` clean, Dialyzer clean |
 
 
@@ -537,6 +537,34 @@ counts and histogram buckets.
 200 with the right one, and real series
 (`pulse_ops_monitoring_check_count{status="healthy"} 6`) with no `service_id`
 label anywhere in the output.
+
+
+### Phase 2 — F7: rule changes propagate without restarting anything
+
+- A rule change used to restart every affected monitor: stop the process, wait
+  for the registry to release its name, boot a replacement — **once per service,
+  in sequence, from the LiveView that saved the rule**. An organization-wide
+  rule made that O(number of services) of blocking work; the roadmap's estimate
+  was up to 50 seconds at 100 services.
+- `ServiceMonitor.rule_changed/1` casts instead. Each monitor re-reads its own
+  rule in its own process, so nothing waits on anything else and the caller
+  returns immediately.
+- **The cast does something a restart could not.** A restart discarded the
+  failure and success tallies, so a threshold lowered to 1 still needed a fresh
+  probe to bite. The monitor now applies the new thresholds to what it has
+  already counted, so the change takes effect at once and no information is
+  thrown away.
+- `MonitorSupervisor.stop_monitor/1` waits for `Process.monitor`'s `:DOWN`
+  instead of sleeping in 10 ms steps for up to half a second. The registry's
+  own cleanup still cannot be awaited — it drops its entry when *it* handles the
+  `:DOWN`, in its own process, with no message to subscribe to — so that part
+  keeps a bounded check, now yielding with `Process.sleep(0)` rather than idling.
+- `status/1` reports the thresholds the monitor is actually running on, which is
+  the only way to observe that a change reached it.
+- The four propagation tests asserted the *mechanism* (the pid changed). They
+  now assert the outcome — the new thresholds are in force — **and** that the
+  pid did not change. A cast from the test process is ordered ahead of a call
+  made from it afterwards, so they need no polling.
 
 
 ## Next steps

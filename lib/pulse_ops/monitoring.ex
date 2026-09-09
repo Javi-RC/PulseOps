@@ -12,6 +12,7 @@ defmodule PulseOps.Monitoring do
   alias PulseOps.Monitoring.MonitorSupervisor
   alias PulseOps.Monitoring.Rollup
   alias PulseOps.Monitoring.Service
+  alias PulseOps.Monitoring.ServiceMonitor
   alias PulseOps.Organizations
   alias PulseOps.Repo
 
@@ -523,7 +524,7 @@ defmodule PulseOps.Monitoring do
            %AlertRule{}
            |> AlertRule.changeset(attrs, scope)
            |> Repo.insert() do
-      restart_affected_monitors(scope, rule)
+      notify_rule_change(scope, rule)
       {:ok, rule}
     end
   end
@@ -540,7 +541,7 @@ defmodule PulseOps.Monitoring do
            rule
            |> AlertRule.changeset(attrs, scope)
            |> Repo.update() do
-      restart_affected_monitors(scope, previous_rule, rule)
+      notify_rule_change(scope, previous_rule, rule)
       {:ok, rule}
     end
   end
@@ -554,29 +555,35 @@ defmodule PulseOps.Monitoring do
 
     with :ok <- Organizations.authorize(scope, :manage_organization),
          {:ok, rule = %AlertRule{}} <- Repo.delete(rule) do
-      restart_affected_monitors(scope, rule)
+      notify_rule_change(scope, rule)
       {:ok, rule}
     end
   end
 
   @doc """
-  Restarts the monitors whose running rules changed.
+  Tells the monitors whose rule changed to re-read it.
 
-  A monitor reads its alert rule once when it boots, so a rule change has no
-  effect until the process restarts. Public so callers with access to a service
-  (the monitor's owner) can do the same right after changing a rule directly.
+  A monitor reads its alert rule at boot, so a change has to reach the running
+  process somehow. It used to be a restart — stop, wait for the registry to
+  release the name, boot a replacement — done once per affected service, in
+  sequence, from whichever process saved the rule. For an organization-wide
+  rule that is O(number of services) of blocking work in a LiveView, and at a
+  few hundred services it is unusable.
+
+  Each monitor is now sent a cast and re-reads its own rule in its own process,
+  so nothing waits on anything else and the caller returns immediately.
   """
-  def restart_affected_monitors(%Scope{} = scope, %AlertRule{} = rule) do
-    restart_affected_monitors(scope, rule, rule)
+  def notify_rule_change(%Scope{} = scope, %AlertRule{} = rule) do
+    notify_rule_change(scope, rule, rule)
   end
 
   # An update can move a rule between a service and the organization default, so
-  # both the previous and the new binding need their monitors restarted.
-  defp restart_affected_monitors(%Scope{} = scope, %AlertRule{} = previous, %AlertRule{} = latest) do
+  # both the previous and the new binding have to be told.
+  defp notify_rule_change(%Scope{} = scope, %AlertRule{} = previous, %AlertRule{} = latest) do
     [previous, latest]
     |> Enum.flat_map(&service_ids_affected_by(scope, &1))
     |> Enum.uniq()
-    |> Enum.each(&restart_monitor(scope, &1))
+    |> Enum.each(&ServiceMonitor.rule_changed/1)
   end
 
   # No service_id means the rule is the organization default and applies to every
@@ -586,13 +593,6 @@ defmodule PulseOps.Monitoring do
   end
 
   defp service_ids_affected_by(_scope, %AlertRule{service_id: service_id}), do: [service_id]
-
-  defp restart_monitor(%Scope{} = scope, service_id) do
-    case Repo.get_by(Service, id: service_id, organization_id: scope.organization.id) do
-      nil -> :ok
-      %Service{} = service -> MonitorSupervisor.restart_monitor(service)
-    end
-  end
 
   @doc """
   Changeset for alert rule forms.

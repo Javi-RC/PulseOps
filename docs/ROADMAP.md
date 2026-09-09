@@ -248,7 +248,7 @@ Make the system survive realistic data and observe itself.
 - [x] **F8** Consume the telemetry: Prometheus metrics, a `/metrics` endpoint,
       structured logging with `service_id`/`organization_id`, `Oban.Telemetry`
       for job failures
-- [ ] **F7** Propagate rule changes without restarting processes:
+- [x] **F7** Propagate rule changes without restarting processes:
       `GenServer.cast({:rule_changed, rule})` instead of restart, and
       `Process.monitor` instead of `Process.sleep`
 - [ ] Extract the status state machine (`next_status/3`, `tally/2`) from

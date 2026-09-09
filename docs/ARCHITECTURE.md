@@ -45,8 +45,10 @@ Monitors are `restart: :transient` under a `DynamicSupervisor` with bounded
 `max_restarts`. A monitor whose endpoint makes it crash repeatedly is given up on
 without affecting any other monitor — fault isolation is the point of the design.
 
-A monitor reads its alert rule at boot, and the context restarts every monitor
-whose rule changed so the new thresholds reach them. If the service row
+A monitor reads its alert rule at boot, and the context casts to every monitor
+whose rule changed so each re-reads it in its own process — the new thresholds
+are applied to the failure and success counts already taken, so a change takes
+effect immediately rather than at the next probe. If the service row
 disappears under a running monitor (a delete racing an in-flight probe), the
 failed insert tells the monitor to stop cleanly rather than be restarted into a
 boot-probe crash loop.
