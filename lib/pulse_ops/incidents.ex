@@ -10,6 +10,8 @@ defmodule PulseOps.Incidents do
 
   import Ecto.Query, warn: false
 
+  require Logger
+
   alias Ecto.Multi
   alias PulseOps.Accounts.Scope
   alias PulseOps.Incidents.Incident
@@ -115,6 +117,12 @@ defmodule PulseOps.Incidents do
     |> Repo.transaction()
     |> case do
       {:ok, %{incident: incident}} ->
+        Logger.info("incident opened",
+          incident_id: incident.id,
+          service_id: service.id,
+          organization_id: service.organization_id
+        )
+
         broadcast(service.organization_id, {:incident_opened, incident})
         Notifications.enqueue_incident_notifications(service.organization_id, incident, :opened)
         {:ok, incident}
@@ -175,6 +183,12 @@ defmodule PulseOps.Incidents do
         |> Repo.transaction()
         |> case do
           {:ok, %{incident: incident}} ->
+            Logger.info("incident resolved automatically",
+              incident_id: incident.id,
+              service_id: service.id,
+              organization_id: service.organization_id
+            )
+
             broadcast(service.organization_id, {:incident_resolved, incident})
 
             Notifications.enqueue_incident_notifications(

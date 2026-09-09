@@ -59,6 +59,11 @@ config :pulse_ops, PulseOpsWeb.Endpoint,
 # on (see PulseOps.Monitoring.UrlGuard).
 config :pulse_ops, :allow_private_targets, true
 
+# A fixed token in development so `curl -H "Authorization: Bearer dev-metrics"`
+# works without ceremony. Production reads METRICS_TOKEN, and without one the
+# endpoint 404s.
+config :pulse_ops, :metrics_token, "dev-metrics"
+
 config :pulse_ops, dev_routes: true
 
 # Do not include metadata nor timestamps in development logs

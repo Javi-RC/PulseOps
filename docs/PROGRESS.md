@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) — scale and visibility |
-| Next | F8 — consume the telemetry that is emitted and heard by nobody |
-| Checks | `mix check` green: 444 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | F7 — propagate rule changes without restarting monitors |
+| Checks | `mix check` green: 450 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -506,6 +506,37 @@ document, so a stale one is worse than none. Corrected:
 aggregation over the same finished hours — **17,247 raw checks across 9 services
 reduced to 142 rollup rows, agreeing exactly** on totals, up counts, latency
 counts and histogram buckets.
+
+
+### Phase 2 — F8: the telemetry is consumed
+
+- `[:pulse_ops, :monitoring, :check]` had been emitted since Phase 3 and heard
+  by nobody. `PulseOpsWeb.Telemetry` defined the stock Phoenix metrics, which
+  only LiveDashboard read, and the reporter line was still commented out.
+- `telemetry_metrics_prometheus_core` keeps a Prometheus-shaped set in ETS,
+  separate from `metrics/0`: the two reporters want different shapes, and a
+  Prometheus histogram needs explicit buckets LiveDashboard has no use for.
+- Exported: probe counts and a response-time histogram by status, Oban job
+  outcomes and queue time by worker, request duration by route, query time, and
+  VM memory. **Nothing is labelled with a `service_id`** — cardinality would
+  grow with every tenant's every service, and per-service figures already live
+  in the database and on the dashboard. Prometheus watches PulseOps; the
+  database watches the services.
+- `/metrics` sits on its own pipeline — no session, no CSRF, no layout — behind
+  `MetricsAuth`. **No token configured means 404, not 401**, so an installation
+  that never set one does not advertise that it has metrics. The comparison is
+  `Plug.Crypto.secure_compare/2`; `==` leaks the token's prefix to anyone
+  willing to measure. `METRICS_TOKEN` at runtime, a fixed one in dev.
+- Status transitions and the incident lifecycle now log `service_id`,
+  `organization_id` and `incident_id` as **metadata rather than interpolated
+  prose**, so an aggregator can filter on them. `Oban.Telemetry.attach_default_logger`
+  turns a failing job into a log line instead of silence.
+
+**Verified against the running app** with
+`priv/scenarios/metrics_endpoint.exs`: 401 with no token, 401 with a wrong one,
+200 with the right one, and real series
+(`pulse_ops_monitoring_check_count{status="healthy"} 6`) with no `service_id`
+label anywhere in the output.
 
 
 ## Next steps

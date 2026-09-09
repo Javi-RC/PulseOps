@@ -245,7 +245,7 @@ Make the system survive realistic data and observe itself.
 
 - [x] Metric rollups (hourly table + Oban job), rewrite `service_metrics/3` and
       `uptime_by_service/2` to read them — the expensive half of F4
-- [ ] **F8** Consume the telemetry: Prometheus metrics, a `/metrics` endpoint,
+- [x] **F8** Consume the telemetry: Prometheus metrics, a `/metrics` endpoint,
       structured logging with `service_id`/`organization_id`, `Oban.Telemetry`
       for job failures
 - [ ] **F7** Propagate rule changes without restarting processes:

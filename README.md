@@ -41,6 +41,15 @@ Start here, in this order:
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
 4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
 
+## Metrics
+
+PulseOps exposes its own health to Prometheus at `/metrics`, behind a bearer
+token — set `METRICS_TOKEN` to enable it, and without one the endpoint returns
+404 rather than advertising itself. The series describe *PulseOps*: probe
+volumes and response times, Oban job outcomes, request and query latency. They
+carry no `service_id` label, because per-service figures live in the database
+and a label per tenant's service is how a Prometheus server falls over.
+
 ## Running it
 
 Everything runs in Docker; no Elixir installation is required on the host.

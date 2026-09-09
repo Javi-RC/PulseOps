@@ -290,7 +290,12 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
   end
 
   defp transition(state, next_status, result) do
-    Logger.info("service #{state.service.id} #{state.status} -> #{next_status}")
+    Logger.info("service status changed",
+      service_id: state.service.id,
+      organization_id: state.service.organization_id,
+      service_status_from: state.status,
+      service_status_to: next_status
+    )
 
     service = Monitoring.update_service_status(state.service, next_status)
 

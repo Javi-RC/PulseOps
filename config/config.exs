@@ -135,9 +135,18 @@ config :tailwind,
   ]
 
 # Configure Elixir's Logger
+# The domain identifiers are logged as metadata rather than interpolated into
+# the message, so a log aggregator can filter on them instead of parsing prose.
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [
+    :request_id,
+    :service_id,
+    :organization_id,
+    :service_status_from,
+    :service_status_to,
+    :incident_id
+  ]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

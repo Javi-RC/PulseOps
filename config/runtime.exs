@@ -20,6 +20,13 @@ if System.get_env("PHX_SERVER") do
   config :pulse_ops, PulseOpsWeb.Endpoint, server: true
 end
 
+# Prometheus scraping is off unless a token is set, and /metrics 404s without
+# one. Operational metrics say a lot about who is using an installation, so
+# they are not public by default.
+if token = System.get_env("METRICS_TOKEN") do
+  config :pulse_ops, :metrics_token, token
+end
+
 config :pulse_ops, PulseOpsWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
