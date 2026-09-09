@@ -11,6 +11,7 @@ defmodule PulseOpsWeb.MemberLive.Index do
   import PulseOpsWeb.UIComponents
 
   alias PulseOps.Organizations
+  alias PulseOps.Organizations.Invitation
   alias PulseOps.Organizations.Membership
 
   @impl true
@@ -29,7 +30,29 @@ defmodule PulseOpsWeb.MemberLive.Index do
         {:noreply,
          socket
          |> put_flash(:info, "#{membership.user.email} added to the organization.")
-         |> assign(:form, to_form(%{"email" => "", "role" => "member"}, as: :member))
+         |> reset_form()
+         |> load_members()}
+
+      # Nobody is registered with that address, which is the common case and
+      # used to be a dead end. One field does both: add whoever is already here,
+      # invite whoever is not.
+      {:error, :not_found} ->
+        {:noreply, invite(socket, email, role)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, message_for(reason))}
+    end
+  end
+
+  def handle_event("withdraw", %{"id" => id}, socket) do
+    case Organizations.revoke_invitation(socket.assigns.current_scope, String.to_integer(id)) do
+      {:ok, invitation} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           "Invitation to #{invitation.email} withdrawn; its link stops working."
+         )
          |> load_members()}
 
       {:error, reason} ->
@@ -67,16 +90,37 @@ defmodule PulseOpsWeb.MemberLive.Index do
     end
   end
 
+  defp invite(socket, email, role) do
+    scope = socket.assigns.current_scope
+
+    case Organizations.invite_member(scope, email, role, &url(~p"/invitations/#{&1}")) do
+      {:ok, invitation, _token} ->
+        socket
+        |> put_flash(:info, "Invitation sent to #{invitation.email}.")
+        |> reset_form()
+        |> load_members()
+
+      {:error, reason} ->
+        put_flash(socket, :error, message_for(reason))
+    end
+  end
+
+  defp reset_form(socket) do
+    assign(socket, :form, to_form(%{"email" => "", "role" => "member"}, as: :member))
+  end
+
   defp load_members(socket) do
     scope = socket.assigns.current_scope
 
     socket
     |> assign(:members, Organizations.list_members(scope))
+    |> assign(:invitations, Organizations.list_pending_invitations(scope))
     |> assign(:can_manage?, Organizations.can?(scope, :manage_organization))
   end
 
-  defp message_for(:not_found),
-    do: "No account is registered with that email address. They need to sign up first."
+  defp message_for(:not_found), do: "That invitation no longer exists."
+
+  defp message_for(:already_a_member), do: "That person is already a member."
 
   defp message_for(:unauthorized), do: "You do not have permission to manage members."
   defp message_for(:owner_required), do: "Only an owner can add or change another owner."
@@ -85,10 +129,15 @@ defmodule PulseOpsWeb.MemberLive.Index do
     do: "This is the only owner left. Promote somebody else first."
 
   defp message_for(%Ecto.Changeset{} = changeset) do
-    if changeset.errors[:organization_id] || changeset.errors[:user_id] do
-      "That person is already a member of this organization."
-    else
-      "That change could not be saved."
+    cond do
+      changeset.errors[:organization_id] || changeset.errors[:user_id] ->
+        "That person is already a member of this organization."
+
+      changeset.errors[:email] ->
+        "That email address does not look right."
+
+      true ->
+        "That change could not be saved."
     end
   end
 
@@ -111,7 +160,7 @@ defmodule PulseOpsWeb.MemberLive.Index do
         <.form for={@form} phx-submit="add" class="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div class="flex-1">
             <label class="mb-1 block text-sm font-medium" for="member_email">
-              Add an existing account
+              Add or invite somebody
             </label>
             <input
               type="email"
@@ -134,13 +183,44 @@ defmodule PulseOpsWeb.MemberLive.Index do
           </div>
 
           <button class="btn btn-primary">
-            <.icon name="lucide-user-plus" class="size-4" /> Add member
+            <.icon name="lucide-user-plus" class="size-4" /> Add or invite
           </button>
         </.form>
 
         <p class="mt-2 text-xs text-base-content/50">
-          The person must already have a PulseOps account. Email invitations are not built yet.
+          If they already have a PulseOps account they are added straight away. If not, they are
+          emailed an invitation that lasts {Invitation.validity_days()} days.
         </p>
+      </.card>
+
+      <.card :if={@invitations != []} class="mb-6" padded={false}>
+        <p class="px-4 pt-4 text-sm font-medium">Waiting to be accepted</p>
+
+        <ul class="mt-2 divide-y divide-base-300">
+          <li
+            :for={invitation <- @invitations}
+            class="flex flex-wrap items-center gap-3 px-4 py-3"
+          >
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm">{invitation.email}</p>
+              <p class="text-xs text-base-content/50">
+                Invited as {invitation.role}, expires {Calendar.strftime(
+                  invitation.expires_at,
+                  "%Y-%m-%d"
+                )}
+              </p>
+            </div>
+
+            <button
+              :if={@can_manage?}
+              phx-click="withdraw"
+              phx-value-id={invitation.id}
+              class="btn btn-ghost btn-sm"
+            >
+              Withdraw
+            </button>
+          </li>
+        </ul>
       </.card>
 
       <.card padded={false}>

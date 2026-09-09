@@ -9,6 +9,8 @@ defmodule PulseOps.Organizations do
   alias Ecto.Multi
   alias PulseOps.Accounts.Scope
   alias PulseOps.Accounts.User
+  alias PulseOps.Organizations.Invitation
+  alias PulseOps.Organizations.InvitationNotifier
   alias PulseOps.Organizations.Membership
   alias PulseOps.Organizations.Organization
   alias PulseOps.Repo
@@ -287,6 +289,209 @@ defmodule PulseOps.Organizations do
 
   # An admin manages members, but promoting somebody to owner — or editing an
   # existing owner — is an owner's decision.
+
+  ## Invitations
+
+  @doc """
+  Invites an address to the organization, whether or not it has an account here.
+
+  Replaces any invitation already waiting for that address, so re-inviting
+  somebody does not leave two live links. Returns `{:ok, invitation, token}`;
+  the token is the secret in the emailed link and is never stored.
+
+  `url_fun` turns the token into the link to put in the email. The caller
+  supplies it because building a URL is the web layer's job, not the domain's —
+  the same reason `Accounts.deliver_login_instructions/2` takes one.
+  """
+  @spec invite_member(Scope.t(), String.t(), atom(), (String.t() -> String.t()) | nil) ::
+          {:ok, Invitation.t(), String.t()}
+          | {:error, Ecto.Changeset.t()}
+          | {:error, :unauthorized | :owner_required | :already_a_member}
+  def invite_member(%Scope{} = scope, email, role, url_fun \\ nil) do
+    normalized = Invitation.normalize_email(email)
+
+    with :ok <- authorize(scope, :manage_organization),
+         :ok <- authorize_role_assignment(scope, role),
+         :ok <- ensure_not_a_member(scope, normalized) do
+      {token, changeset} =
+        Invitation.build(scope.organization, scope.user, %{email: normalized, role: role})
+
+      Multi.new()
+      |> Multi.delete_all(:previous, pending_for(scope.organization.id, normalized))
+      |> Multi.insert(:invitation, changeset)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{invitation: invitation}} ->
+          deliver(invitation, token, url_fun)
+          {:ok, invitation, token}
+
+        {:error, :invitation, changeset, _changes} ->
+          {:error, changeset}
+      end
+    end
+  end
+
+  # No url_fun means nobody asked for an email — which is how the context tests
+  # exercise the rest without a mailbox.
+  defp deliver(_invitation, _token, nil), do: :ok
+
+  defp deliver(invitation, token, url_fun) do
+    invitation
+    |> Repo.preload([:organization, :invited_by])
+    |> InvitationNotifier.deliver_invitation(url_fun.(token))
+  end
+
+  @doc """
+  Invitations for the scoped organization that have not been accepted, newest
+  first.
+  """
+  @spec list_pending_invitations(Scope.t()) :: [Invitation.t()]
+  def list_pending_invitations(%Scope{} = scope) do
+    Repo.all(
+      from i in Invitation,
+        where: i.organization_id == ^scope.organization.id and is_nil(i.accepted_at),
+        order_by: [desc: i.inserted_at],
+        preload: [:invited_by]
+    )
+  end
+
+  @doc """
+  Withdraws an invitation, which makes its link stop working.
+  """
+  @spec revoke_invitation(Scope.t(), integer()) ::
+          {:ok, Invitation.t()} | {:error, :not_found | :unauthorized}
+  def revoke_invitation(%Scope{} = scope, id) do
+    with :ok <- authorize(scope, :manage_organization) do
+      case Repo.get_by(Invitation, id: id, organization_id: scope.organization.id) do
+        nil -> {:error, :not_found}
+        invitation -> Repo.delete(invitation)
+      end
+    end
+  end
+
+  @doc """
+  The invitation a token redeems, if it is still good.
+
+  An expired, accepted, withdrawn or unknown token are one answer: the page that
+  shows this cannot say which, or it would report whether an address had ever
+  been invited.
+  """
+  @spec fetch_invitation(String.t()) :: {:ok, Invitation.t()} | {:error, :invalid_invitation}
+  def fetch_invitation(token) when is_binary(token) do
+    hashed = Invitation.hash(token)
+
+    case Repo.one(
+           from i in Invitation,
+             where: i.hashed_token == ^hashed,
+             preload: [:organization, :invited_by]
+         ) do
+      nil ->
+        {:error, :invalid_invitation}
+
+      invitation ->
+        if Invitation.pending?(invitation),
+          do: {:ok, invitation},
+          else: {:error, :invalid_invitation}
+    end
+  end
+
+  def fetch_invitation(_other), do: {:error, :invalid_invitation}
+
+  @doc """
+  Redeems an invitation: registers the person if this is their first time here,
+  adds the membership, and marks the invitation used.
+
+  Returns `{:ok, user, membership}`. The caller signs the user in — holding the
+  link proved control of the mailbox, which is exactly the proof the magic-link
+  login accepts, so an invitation is a login that also grants a membership.
+
+  Single use: the whole thing runs in one transaction and the invitation is
+  stamped inside it, so two clicks cannot produce two memberships.
+  """
+  @spec accept_invitation(String.t()) ::
+          {:ok, User.t(), Membership.t()} | {:error, :invalid_invitation} | {:error, term()}
+  def accept_invitation(token) do
+    with {:ok, invitation} <- fetch_invitation(token) do
+      Multi.new()
+      |> Multi.run(:user, fn _repo, _changes -> find_or_register(invitation.email) end)
+      |> Multi.insert(:membership, fn %{user: user} ->
+        Membership.changeset(%Membership{}, %{
+          organization_id: invitation.organization_id,
+          user_id: user.id,
+          role: invitation.role
+        })
+      end)
+      |> Multi.update(
+        :invitation,
+        Ecto.Changeset.change(invitation, accepted_at: DateTime.utc_now(:second))
+      )
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{user: user, membership: membership}} ->
+          {:ok, user, Repo.preload(membership, :organization)}
+
+        # Already a member — the person was added by hand between the invitation
+        # being sent and being opened. Nothing is wrong with that, so the
+        # invitation is spent and they are let in.
+        {:error, :membership, _changeset, %{user: user}} ->
+          spend(invitation)
+
+          membership =
+            Membership
+            |> Repo.get_by(organization_id: invitation.organization_id, user_id: user.id)
+            |> Repo.preload(:organization)
+
+          {:ok, user, membership}
+
+        {:error, _step, reason, _changes} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp find_or_register(email) do
+    case Repo.get_by(User, email: email) do
+      %User{} = user -> {:ok, confirm(user)}
+      nil -> register_invited_user(email)
+    end
+  end
+
+  # A new account, confirmed on the spot: they proved they hold the mailbox by
+  # opening the link, which is the same proof registration asks for. They get a
+  # personal organization too, like anybody who signs up unaided.
+  defp register_invited_user(email) do
+    case PulseOps.Accounts.register_user(%{email: email}) do
+      {:ok, user} -> {:ok, confirm(user)}
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  defp confirm(%User{confirmed_at: nil} = user), do: Repo.update!(User.confirm_changeset(user))
+  defp confirm(%User{} = user), do: user
+
+  defp spend(invitation) do
+    invitation
+    |> Ecto.Changeset.change(accepted_at: DateTime.utc_now(:second))
+    |> Repo.update()
+  end
+
+  defp pending_for(organization_id, email) do
+    from i in Invitation,
+      where: i.organization_id == ^organization_id and i.email == ^email and is_nil(i.accepted_at)
+  end
+
+  defp ensure_not_a_member(%Scope{} = scope, email) do
+    already =
+      Repo.exists?(
+        from m in Membership,
+          join: u in User,
+          on: u.id == m.user_id,
+          where: m.organization_id == ^scope.organization.id and u.email == ^email
+      )
+
+    if already, do: {:error, :already_a_member}, else: :ok
+  end
+
   defp authorize_role_assignment(%Scope{role: :owner}, _role), do: :ok
   defp authorize_role_assignment(_scope, :owner), do: {:error, :owner_required}
   defp authorize_role_assignment(_scope, _role), do: :ok

@@ -2,6 +2,10 @@ defmodule PulseOps.Accounts.User do
   use Ecto.Schema
   import Ecto.Changeset
 
+  # Every other schema in this application declares this; the generated one did
+  # not, so a @spec naming it failed Dialyzer with `unknown_type`.
+  @type t :: %__MODULE__{}
+
   schema "users" do
     field :email, :string
     field :password, :string, virtual: true, redact: true

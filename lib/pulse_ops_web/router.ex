@@ -13,8 +13,24 @@ defmodule PulseOpsWeb.Router do
     plug :fetch_current_scope_for_user
   end
 
+  # No session and no CSRF: a token is the whole credential, and a bearer token
+  # is not sent by a browser on its own, so there is no cross-site request to
+  # forge.
   pipeline :api do
     plug :accepts, ["json"]
+    plug PulseOpsWeb.Plugs.ApiAuth
+  end
+
+  scope "/api/v1", PulseOpsWeb.Api do
+    pipe_through :api
+
+    resources "/services", ServiceController, except: [:new, :edit]
+
+    get "/incidents", IncidentController, :index
+    get "/incidents/:id", IncidentController, :show
+    patch "/incidents/:id", IncidentController, :update
+    put "/incidents/:id", IncidentController, :update
+    post "/incidents/:id/resolve", IncidentController, :resolve
   end
 
   # Deliberately not on :browser — no session, no CSRF, no layout. A scraper is
@@ -35,11 +51,6 @@ defmodule PulseOpsWeb.Router do
 
     get "/", PageController, :home
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", PulseOpsWeb do
-  #   pipe_through :api
-  # end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:pulse_ops, :dev_routes) do
@@ -103,9 +114,30 @@ defmodule PulseOpsWeb.Router do
       live "/orgs/:org/settings/notifiers", NotifierLive.Index, :index
       live "/orgs/:org/settings/notifiers/new", NotifierLive.Form, :new
       live "/orgs/:org/settings/notifiers/:id/edit", NotifierLive.Form, :edit
+      live "/orgs/:org/settings/api-tokens", ApiTokenLive.Index, :index
     end
 
     post "/users/update-password", UserSessionController, :update_password
+  end
+
+  # The public status page. Outside every authenticated live_session on purpose:
+  # the point is that a reader gets it without an account. It still receives the
+  # current scope so a signed-in visitor keeps their own header, and
+  # PulseOps.StatusPage is the only context it can reach.
+  scope "/", PulseOpsWeb do
+    pipe_through [:browser]
+
+    live_session :public_status_page,
+      on_mount: [{PulseOpsWeb.UserAuth, :mount_current_scope}] do
+      live "/status/:slug", StatusPageLive, :show
+
+      # Public because the person being invited may have no account yet. The
+      # page only offers to accept; accepting is the POST below, so a mail
+      # scanner following the link cannot join an organization on their behalf.
+      live "/invitations/:token", InvitationLive, :show
+    end
+
+    post "/invitations/:token/accept", InvitationController, :accept
   end
 
   scope "/", PulseOpsWeb do

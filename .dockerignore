@@ -12,3 +12,9 @@ erl_crash.dump
 *.ez
 docs
 README.md
+test
+# Never let a local .env reach an image.
+.env
+.env.*
+# Scripts that create demonstration data. They belong to development.
+priv/scenarios

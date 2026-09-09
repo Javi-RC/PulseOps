@@ -75,8 +75,25 @@ if config_env() == :prod do
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
+  # A managed database is reached over the network, so TLS is the default and
+  # DATABASE_SSL=false is the deliberate opt-out for a database on a private
+  # network that does not speak it. `cacerts` comes from the OS bundle the
+  # runtime image installs, and `verify_peer` means a certificate is actually
+  # checked rather than merely offered.
+  database_ssl =
+    if System.get_env("DATABASE_SSL", "true") in ~w(true 1) do
+      [
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        server_name_indication: String.to_charlist(URI.parse(database_url).host || ""),
+        customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
+      ]
+    else
+      false
+    end
+
   config :pulse_ops, PulseOps.Repo,
-    # ssl: true,
+    ssl: database_ssl,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
@@ -95,7 +112,22 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  # No default. The old one was "example.com", which booted happily and then put
+  # a hostname nobody owns into every URL the system generates — the incident
+  # links in webhook payloads and email notifications, and the magic links
+  # people log in with. A deployment that cannot say what it is called is
+  # misconfigured, and failing at boot says so while somebody is still watching.
+  host =
+    System.get_env("PHX_HOST") ||
+      raise """
+      environment variable PHX_HOST is missing.
+
+      It is the hostname this installation is reached at, and it ends up in
+      every link PulseOps generates — magic-link logins, and the incident URLs
+      in webhook and email notifications. There is no sensible default.
+
+      For example: status.example.com
+      """
 
   config :pulse_ops, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 

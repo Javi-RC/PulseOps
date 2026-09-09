@@ -82,6 +82,15 @@ Task.Supervisor.async_nolink  ──►  HealthCheck.Req  ──►  {:ok, Resul
 The jitter keeps monitors from synchronising into a thundering herd after a mass
 restart. See ADR-002 for why the request is not made inline.
 
+A probe is not always `GET` and a status line is not always the whole story. A
+service says how it wants to be reached — method, headers, body — and what
+counts as healthy: an exact status, so an endpoint whose healthy answer is `204`
+or `401` can be watched, and a string that must appear in the response, which is
+the only way to catch a service that is up, answering `200`, and saying in its
+payload that its database is gone. The monitor builds those options and the HTTP
+client stays a function of a URL and a keyword list, never learning what a
+`Service` is.
+
 Deciding *what the status is* is not part of the monitor. `StatusMachine` is a
 pure module — no processes, no database, no clock — that folds probe verdicts
 into a status under the rule's thresholds. The monitor owns the I/O and the
@@ -95,12 +104,17 @@ a GenServer and cheap to explore through a function.
 organizations ──┬── organization_members ──── users
                 ├── alert_rules               (org default or per-service override)
                 ├── notifiers                 (webhook URL or email per organization)
+                ├── api_tokens                (hashed; acts as the user who made it)
+                ├── organization_invitations  (hashed; single use, expires)
                 └── services ──┬── service_checks ──── service_check_rollups
                                └── incidents ──── incident_events
 ```
 
 - `services` — name, description, environment, url, `check_interval_ms`,
-  `timeout_ms`, `enabled`, current `status`, `last_checked_at`.
+  `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`, plus
+  how to make the request: `http_method`, `request_headers`, `request_body`,
+  and what counts as healthy — `expected_status` (null means any 2xx) and
+  `body_assertion` (null means the body is not read).
 - `alert_rules` — failure/success thresholds and a severity for incident handling;
   `service_id` null is the organization default, otherwise it overrides one
   service. Monitors read their rule on boot, so changing a rule restarts every
@@ -162,8 +176,31 @@ resolved by slug; `on_mount :require_organization` loads the organization, verif
 membership, and puts it on the scope. Every context function takes the scope and
 filters by `scope.organization.id`. See ADR-001.
 
+People join either by being added — if they already have an account — or by
+being invited, which emails a single-use link to an address that may have none.
+Accepting creates the account, confirms it, adds the membership and signs them
+in, because holding the link proves control of the mailbox, which is what the
+magic-link login already accepts as proof. Accepting is a `POST`, so a mail
+scanner following the link cannot join on somebody's behalf. See ADR-013.
+
 Roles: `owner` and `admin` may write, `member` may act on incidents, `viewer` is
 read-only. Authorization is enforced in the contexts, not by hiding buttons.
+
+A token is the second way to hold a scope. `PulseOpsWeb.Plugs.ApiAuth` turns a
+bearer token into the same `%Scope{}` a session produces, and the API controllers
+then call the same context functions the LiveViews call — so every tenant filter
+and role check applies without the API restating one. A token names the person
+who made it and takes its role from their membership at request time, so it can
+never outrank its owner. Only the hash is stored. See ADR-012.
+
+The one deliberate exception is the public status page at `/status/:slug`, which
+anybody can read. It goes through `PulseOps.StatusPage` and nowhere else — a
+context of its own, so the exception is a file to review rather than a scattering
+of unauthenticated functions among scoped ones. Its queries name the columns they
+return, so a service's `url` and an incident's `cause` are never fetched and no
+template change can start leaking them. An organization publishes nothing until
+`status_page_enabled` is set; a service appears only while its `public` flag is.
+See ADR-011.
 
 ## PubSub topics
 
@@ -173,6 +210,10 @@ read-only. Authorization is enforced in the contexts, not by hiding buttons.
 | `organization:{id}:incidents` | incident opened / changed / resolved | dashboard, incident list |
 | `service:{id}:checks` | every individual check result | service detail page only |
 
+The public status page subscribes to the first two, so an outage reaches a
+reader's open tab over the connection it already has, as fast as it reaches the
+on-call dashboard.
+
 See ADR-003.
 
 A broadcast is a signal that something changed, not the change itself: a page
@@ -181,6 +222,24 @@ two racing changes cannot leave it out of step. The dashboard defers that re-rea
 briefly and coalesces everything arriving inside the window into one reload,
 because its summary costs four queries and a flapping service would otherwise pay
 for all of them per viewer, per change.
+
+## Deployment shape
+
+The production image is a `mix release` on a runtime carrying no Mix, no build
+tools and no source, running as a non-root user. `bin/migrate` and `bin/server`
+are separate entry points on purpose: a container that migrates as it boots
+races every other replica starting at the same moment.
+
+`PHX_HOST` is mandatory and the release refuses to boot without it — it is in
+every generated link, and a wrong one fails silently rather than loudly.
+`force_ssl` redirects and sets HSTS, trusting `x-forwarded-proto`, so TLS is
+terminated by whatever sits in front.
+
+**PulseOps runs on one node.** `Bootstrapper` starts a monitor for every enabled
+service on *each* node, so a second replica duplicates probes, checks and
+notifications. The partial unique index (ADR-004) keeps incidents from being
+duplicated and protects nothing else. Leader election or partitioning by
+`service_id` has to exist before scaling by replicas.
 
 ## Testing seams
 
