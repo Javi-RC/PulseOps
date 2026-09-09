@@ -432,6 +432,14 @@ standing, and a real recover-then-break-again cycle not being suppressed.
   Ecto telemetry: 25 expired rows at `batch_size: 10` is three statements, not
   one, and the fresh row survives.
 
+### Stabilisation — repo housekeeping
+
+- `mix.exs` said `0.2.0` while `v0.3.0` was tagged; it now agrees with the tag.
+- Deleted the stray empty `.github;W` directory — a shell redirection that
+  landed as a filename — and the 7 MB `erl_crash.dump`, which was already
+  ignored but still sitting in the working tree.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
