@@ -50,6 +50,10 @@ defmodule PulseOps.Monitoring.Service do
     field :body_assertion, :string
     field :status, Ecto.Enum, values: @statuses, default: :unknown
     field :last_checked_at, :utc_datetime
+    field :tls_expires_at, :utc_datetime
+    field :tls_checked_at, :utc_datetime
+    field :tls_error, :string
+    field :tls_warned_for, :utc_datetime
 
     belongs_to :organization, Organization
 

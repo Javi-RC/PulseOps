@@ -26,6 +26,7 @@ defmodule PulseOps.Notifications do
   alias PulseOps.Notifications.Notifier
   alias PulseOps.Notifications.NotifierAssignment
   alias PulseOps.Notifications.NotifyJob
+  alias PulseOps.Notifications.TlsWarningJob
   alias PulseOps.Organizations
   alias PulseOps.Repo
 
@@ -247,6 +248,39 @@ defmodule PulseOps.Notifications do
     :pulse_ops
     |> Application.get_env(:notifications, [])
     |> Keyword.get(key, default)
+  end
+
+  @doc """
+  Tells the ordinary channels that a certificate is running out.
+
+  Not an incident: the service is up, and opening one would conflate "broken"
+  with "will break". It is a warning with a date on it, which is a different
+  thing to receive.
+  """
+  @spec enqueue_tls_warning(Service.t(), integer()) :: :ok | :error
+  def enqueue_tls_warning(%Service{} = service, days_left) do
+    jobs =
+      service.organization_id
+      |> notifiers_for_digest(service)
+      |> Enum.map(fn notifier ->
+        TlsWarningJob.new(%{
+          "notifier_id" => notifier.id,
+          "service_id" => service.id,
+          "days_left" => days_left
+        })
+      end)
+
+    if jobs == [] do
+      :ok
+    else
+      jobs
+      |> Oban.insert_all()
+      |> Enum.any?(& &1.discarded_at)
+      |> case do
+        false -> :ok
+        true -> :error
+      end
+    end
   end
 
   @doc """

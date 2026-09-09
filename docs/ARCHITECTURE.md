@@ -121,6 +121,9 @@ organizations ──┬── organization_members ──── users
                                └── incidents ──── incident_events
 ```
 
+- `services` — certificate expiry is watched daily for `https` ones and warned
+  about once per expiry, without opening an incident: the service is up, and a
+  certificate running out needs a calendar entry rather than a page (ADR-016).
 - `services` — name, description, environment, url, `check_interval_ms`,
   `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`, plus
   how to make the request: `http_method`, `request_headers`, `request_body`,
@@ -260,6 +263,11 @@ duplicated and protects nothing else. Leader election or partitioning by
 `service_id` has to exist before scaling by replicas.
 
 ## Testing seams
+
+Reading a certificate is a second seam of the same shape:
+`PulseOps.Monitoring.TlsCheck` is a behaviour with an `:ssl` implementation and a
+Mox mock, because a handshake needs a real host. The parsing it does with what
+comes back is pure and lives in `TlsCheck.Certificate`.
 
 The HTTP client is a behaviour, `PulseOps.Monitoring.HealthCheck`, resolved through
 application config. Tests swap in a Mox mock; development and production use

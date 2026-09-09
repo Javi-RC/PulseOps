@@ -273,7 +273,7 @@ Behave like an actual on-call tool.
 
 - [x] Maintenance windows and silencing
 - [x] Anti-flapping, notification grouping, escalation
-- [ ] TLS certificate expiry watching
+- [x] TLS certificate expiry watching
 - [ ] UX: time-window selector, destructive-delete confirmation, incident
       pagination, monitor-health visibility
 

@@ -84,6 +84,30 @@ defmodule PulseOps.Notifications.WebhookSender do
     }
   end
 
+  @doc """
+  Sends a certificate-expiry warning. A distinct `event` so a receiver can route
+  it differently from an outage — because it is not one.
+  """
+  def deliver_tls_warning(%Notifier{url: url} = notifier, service, days_left) do
+    case UrlGuard.validate(url) do
+      :ok -> post_body(notifier, tls_payload(service, days_left))
+      {:error, reason} -> {:error, {:blocked_target, reason}}
+    end
+  end
+
+  defp tls_payload(service, days_left) do
+    %{
+      "event" => "tls_expiring",
+      "service" => %{
+        "id" => service.id,
+        "name" => service.name,
+        "environment" => to_string(service.environment)
+      },
+      "days_left" => days_left,
+      "expires_at" => iso(service.tls_expires_at)
+    }
+  end
+
   # Tests route every webhook through the `:pulseops` Req.Test stub so nothing
   # touches the network. Everything else delivers over the wire.
   defp plug do

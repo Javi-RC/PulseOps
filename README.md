@@ -81,6 +81,13 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## Certificate expiry
+
+Every `https` service's certificate is read once a day and its expiry stored. A
+certificate inside the warning window is announced once — and again if a renewal
+later runs low — without opening an incident, because the service is up and this
+needs a calendar entry rather than a page.
+
 ## Notifications that stay signal
 
 A service oscillating on its threshold sends **one** message saying how often it

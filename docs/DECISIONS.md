@@ -483,6 +483,57 @@ form says so where it is set.
 
 ---
 
+## ADR-016 — TLS expiry is read without verifying, checked daily, and is not an incident
+
+**Decision.** A daily job reads the certificate of every enabled `https` service
+and stores its expiry. A certificate inside the warning window is announced
+through the ordinary notifier channels, once per expiry. It does **not** open an
+incident.
+
+The handshake is made with `verify: :verify_none`.
+
+**Why not verify.** The job is to read the date the host presents. A certificate
+that has already expired, is self-signed, or carries the wrong name all fail
+verification — and those are exactly the cases somebody most needs told about.
+Verifying would turn "your certificate expired last night" into a connection
+error with no date in it, which is the least useful possible answer. Nothing is
+trusted as a result: the only thing taken from the peer is a date, used to decide
+whether to warn a human. Reading it against `expired.badssl.com` returned
+`~U[2015-04-12 23:59:59Z]`, which a verifying connection could not have told us.
+
+**Why daily rather than per probe.** A certificate changes at most once in its
+life. Checking on every probe would be a TLS handshake every thirty seconds per
+service to learn a date that moves once a quarter.
+
+**Why not an incident.** The service is up. Opening an incident would conflate
+"broken" with "will break", put a false outage in the uptime figures, and page
+whoever is on call for something that needs a calendar entry rather than a
+response. It is a warning with a date on it, which is a different thing to
+receive — and it carries its own webhook event so a receiver can route it
+differently.
+
+**Why `tls_warned_for` holds a date, not a boolean.** Renewing a certificate
+moves the expiry, and the next one deserves its own warning. A boolean would
+either warn every day of the window or go silent for ever after the first time.
+Recording *which* expiry was warned about makes "warn once per certificate" fall
+out of a comparison.
+
+**Rejected.** *Checking during the health probe.* Free in the sense that a
+connection is already being made, and it is an HTTP connection, not a raw TLS
+one — the certificate is not exposed at that layer without reaching past Req.
+
+*Storing only "days remaining".* It goes stale the moment it is written. The
+expiry is the fact; the days are a rendering of it, computed when needed —
+which is also why the delivery job recomputes rather than trusting the number it
+was queued with.
+
+**Consequence.** `TlsCheck.Ssl` is the network seam and is excluded from
+coverage, like the other places the suite replaces I/O. Everything it does with
+what comes back — two time formats and RFC 5280's two-digit-year pivot at 2049 —
+lives in `TlsCheck.Certificate`, which is pure and tested directly.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

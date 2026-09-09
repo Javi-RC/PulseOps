@@ -483,6 +483,96 @@ defmodule PulseOps.Monitoring do
     |> Map.new(fn {service_id, %{total: total, up: up}} -> {service_id, up / total * 100} end)
   end
 
+  ## TLS certificates
+
+  @doc """
+  Every enabled service whose certificate is worth looking at.
+
+  Only https ones: there is no certificate behind an http URL, and asking would
+  produce an error a person would have to learn to ignore.
+  """
+  @spec list_services_for_tls_check() :: [Service.t()]
+  def list_services_for_tls_check do
+    Repo.all(
+      from s in Service,
+        where: s.enabled == true and ilike(s.url, "https://%"),
+        order_by: [asc: s.id]
+    )
+  end
+
+  @doc """
+  Records what a certificate check found.
+
+  A new expiry clears `tls_warned_for`, which is what makes a renewed
+  certificate able to warn again later — the field records *which* expiry was
+  warned about, not merely that a warning happened.
+  """
+  @spec record_tls_check(Service.t(), {:ok, map()} | {:error, String.t()}) ::
+          {:ok, Service.t()} | {:error, Ecto.Changeset.t()}
+  def record_tls_check(%Service{} = service, {:ok, %{expires_at: expires_at}}) do
+    changes = [
+      tls_expires_at: expires_at,
+      tls_checked_at: DateTime.utc_now(:second),
+      tls_error: nil
+    ]
+
+    changes =
+      if service.tls_expires_at && DateTime.compare(service.tls_expires_at, expires_at) == :eq do
+        changes
+      else
+        Keyword.put(changes, :tls_warned_for, nil)
+      end
+
+    service |> Ecto.Changeset.change(changes) |> Repo.update()
+  end
+
+  def record_tls_check(%Service{} = service, {:error, reason}) do
+    service
+    |> Ecto.Changeset.change(
+      tls_checked_at: DateTime.utc_now(:second),
+      tls_error: String.slice(to_string(reason), 0, 255)
+    )
+    |> Repo.update()
+  end
+
+  @doc """
+  Marks that the service's current expiry has been warned about.
+  """
+  @spec mark_tls_warned(Service.t()) :: {:ok, Service.t()} | {:error, Ecto.Changeset.t()}
+  def mark_tls_warned(%Service{tls_expires_at: expires_at} = service) do
+    service |> Ecto.Changeset.change(tls_warned_for: expires_at) |> Repo.update()
+  end
+
+  @doc """
+  How many days are left on a service's certificate, or nil.
+  """
+  @spec tls_days_left(Service.t(), DateTime.t()) :: integer() | nil
+  def tls_days_left(service, now \\ DateTime.utc_now())
+
+  def tls_days_left(%Service{tls_expires_at: nil}, _now), do: nil
+
+  def tls_days_left(%Service{tls_expires_at: expires_at}, now),
+    do: DateTime.diff(expires_at, now, :day)
+
+  @doc """
+  Whether a service's certificate is close enough to expiry to say so.
+  """
+  @spec tls_expiring?(Service.t(), DateTime.t()) :: boolean()
+  def tls_expiring?(service, now \\ DateTime.utc_now())
+
+  def tls_expiring?(%Service{tls_expires_at: nil}, _now), do: false
+
+  def tls_expiring?(%Service{} = service, now),
+    do: tls_days_left(service, now) <= tls_warn_days()
+
+  @doc """
+  How many days ahead a certificate expiry is worth warning about.
+  """
+  @spec tls_warn_days() :: pos_integer()
+  def tls_warn_days do
+    :pulse_ops |> Application.get_env(:tls, []) |> Keyword.get(:warn_days, 21)
+  end
+
   ## Alert rules
 
   @doc """

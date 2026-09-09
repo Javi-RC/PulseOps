@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/flapping-and-escalation` |
+| Branch | `feature/tls-expiry` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) in progress — operational reliability |
-| Next | TLS certificate expiry watching, then the UX items |
-| Checks | `mix check` green: 666 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | The four UX items — last of Phase 4 |
+| Checks | `mix check` green: 702 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -857,6 +857,37 @@ reaching the escalation-only channel, and acknowledging making a re-run send
 nothing.
 
 
+### Phase 4 — TLS certificate expiry
+
+- An expired certificate takes a service down as surely as a crashed process,
+  and it is the one outage that announces itself weeks in advance to anybody who
+  looks. Nothing was looking.
+- A daily Oban job reads every enabled `https` service's certificate and stores
+  the expiry. **Daily, not per probe**: a certificate changes at most once in its
+  life, and per-probe would be a handshake every thirty seconds to learn a date
+  that moves once a quarter.
+- **The handshake does not verify the certificate.** That looks alarming and is
+  the point: an expired, self-signed or wrong-name certificate all fail
+  verification, and those are exactly the cases somebody needs told about.
+  Verified against `expired.badssl.com`, which returned `2015-04-12` — a date a
+  verifying connection could not have produced. See **ADR-016**.
+- **It does not open an incident.** The service is up. An incident would put a
+  false outage in the uptime figures and page somebody for what needs a calendar
+  entry. It goes out through the ordinary channels with its own webhook event.
+- `tls_warned_for` stores **which** expiry was warned about, not a boolean.
+  Renewing moves the expiry, so the next one warns in its turn; a flag would
+  either repeat daily or go silent for ever after the first time.
+- The service page shows a notice inside the window, red once expired, and says
+  the service itself is fine so it does not read as an outage.
+
+**Coverage caught two real gaps rather than one nuisance.** Adding this dropped
+the total to 88.92% and `mix test --cover` exited 3, as it is supposed to. Two of
+the three uncovered modules were the email and the delivery job — genuinely
+untested, now tested. Only the socket module is excluded, and its parsing was
+first extracted into `TlsCheck.Certificate` so the fiddly part (two time formats
+and RFC 5280's two-digit-year pivot at 2049) is covered directly.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -912,6 +943,12 @@ unique index (ADR-004) is already what makes the clustering step safe.
   *that* one unless the mailbox is drained after the fixtures and immediately
   before the assertion. Draining once in `setup` is not enough when a test
   creates more users than the setup did.
+- **Swoosh's `assert_email_sent/1` runs `assert fun.(email)`**, so the function
+  has to end in something truthy — and `refute` evaluates to `false` even when it
+  passes. A closure ending in a `refute` fails the assertion it is inside.
+- **`mix check`'s last line is Dialyzer's, not the suite's.** Grepping for
+  "passed successfully" reported success while `mix test --cover` had already
+  exited 3 on the coverage threshold. Check the exit status, not the prose.
 - **`Oban.Testing.perform_job/3` calls the worker directly** and does not consume
   the scheduled row, so a job stays queued after it has been run in a test.
 - **Application env is global, so a test that flips it cannot be `async: true`.**

@@ -53,6 +53,10 @@ config :pulse_ops, start_monitors: false
 # down and back without touching the network.
 config :pulse_ops, health_check_client: PulseOps.Monitoring.HealthCheckMock
 
+# Reading a certificate needs a real handshake with a real host, which the suite
+# must never do.
+config :pulse_ops, tls_check_client: PulseOps.Monitoring.TlsCheckMock
+
 # Oban boots like in any environment (so job workers resolve their config), but
 # queues and cron never start during the suite — jobs run manually through
 # `Oban.Testing.perform_job/2`.

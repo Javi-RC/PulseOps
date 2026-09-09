@@ -186,6 +186,20 @@ defmodule PulseOpsWeb.ServiceLive.Show do
         <.stat_tile label="p99" value={format_ms(@metrics.p99)} />
       </div>
 
+      <div
+        :if={tls_notice(@service)}
+        class={["mb-6 flex items-start gap-3 rounded-box border p-4", tls_class(@service)]}
+      >
+        <.icon name="lucide-shield-alert" class="size-5 shrink-0" />
+        <div>
+          <p class="font-medium">{tls_notice(@service)}</p>
+          <p class="text-sm opacity-70">
+            Nothing is wrong with the service right now — this is the one outage that announces
+            itself in advance.
+          </p>
+        </div>
+      </div>
+
       <section class="mb-8 rounded-lg border border-base-300 p-4">
         <.response_time_chart id={"chart-#{@service.id}"} checks={@checks} />
       </section>
@@ -199,5 +213,25 @@ defmodule PulseOpsWeb.ServiceLive.Show do
       </section>
     </Layouts.app>
     """
+  end
+
+  # Only says something when there is something to say: a certificate with
+  # months left is not news, and a service never checked has no date to report.
+  defp tls_notice(service) do
+    if Monitoring.tls_expiring?(service) do
+      case Monitoring.tls_days_left(service) do
+        days when days < 0 -> "The TLS certificate expired #{abs(days)} days ago"
+        0 -> "The TLS certificate expires today"
+        days -> "The TLS certificate expires in #{days} days"
+      end
+    end
+  end
+
+  defp tls_class(service) do
+    if Monitoring.tls_days_left(service) < 0 do
+      "border-error/40 bg-error/5 text-error"
+    else
+      "border-warning/40 bg-warning/5 text-warning"
+    end
   end
 end

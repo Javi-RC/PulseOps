@@ -125,6 +125,11 @@ defmodule PulseOps.MixProject do
         # routed outside development.
         PulseOpsWeb.Flaky,
         PulseOpsWeb.FlakyController,
+        # The TLS handshake itself: a real connection to a real host, which the
+        # suite must never make. Everything it does with what comes back lives
+        # in TlsCheck.Certificate, which is pure and tested directly, and the
+        # socket half is verified against real hosts by hand.
+        PulseOps.Monitoring.TlsCheck.Ssl,
         # Runs only inside a release, where Mix and ExUnit do not exist. It
         # starts and stops the repository outside the Ecto sandbox, which the
         # suite cannot do without fighting itself; it is verified by building
