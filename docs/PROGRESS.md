@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/maintenance-windows` |
+| Branch | `feature/flapping-and-escalation` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) in progress — operational reliability |
-| Next | Anti-flapping, notification grouping and escalation |
-| Checks | `mix check` green: 637 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | TLS certificate expiry watching, then the UX items |
+| Checks | `mix check` green: 666 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -824,6 +824,39 @@ genuinely failing, the service genuinely reading down — **and no incident**. T
 the window is cancelled and the very next probe opens one, by reconciliation.
 
 
+### Phase 4 — anti-flapping, digests and escalation
+
+- `enqueue_incident_notifications/3` fired 1:1 with no suppression, so a service
+  sitting on its threshold produced a storm, and there was no way to say
+  "somebody is on this" or "nobody is, make more noise".
+- **Flap detection counts incidents, not raw checks.** Every threshold crossing
+  already produces one incident row with a `started_at`, so counting those is one
+  indexed query and no new bookkeeping — and it measures *the thing people
+  actually receive* rather than oscillations nobody was told about.
+- A flapping service stops sending per-incident messages and schedules one
+  `DigestJob`, **unique per service**, so everything arriving while it waits
+  collapses into it. Nine crossings became one message in the scenario.
+- **The digest counts when it runs, not when it was scheduled.** At schedule time
+  only the first crossing has happened; the interesting number is the total.
+- **Escalation is decided at the end, not cancelled at the start.** A critical
+  incident schedules an `EscalationJob`; when it runs it re-reads the incident and
+  does nothing unless it is still open and still unacknowledged. Cancelling a
+  scheduled job instead would mean getting it right in three places — acknowledge,
+  resolve and automatic recovery — and this is one check in one place.
+- **Acknowledgement is its own field, not a workflow status.** `:investigating`
+  says something about the incident; acknowledging says somebody has it. In the
+  first minute both are true and neither implies the other. See **ADR-015**.
+- `notifiers.escalation_only` keeps a channel quiet for ordinary incidents. An
+  escalation reaches **everybody**, including the people already told — nobody
+  picked it up, so more noise is the intent.
+
+**Verified against the running app** with
+`priv/scenarios/flapping_and_escalation.exs`: the first line paged and the second
+silent, eight further crossings producing exactly one digest, the escalation
+reaching the escalation-only channel, and acknowledging making a re-run send
+nothing.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -874,6 +907,13 @@ unique index (ADR-004) is already what makes the clustering step safe.
   *changes*, so they alternated by construction no matter what the state machine
   did. Mutating the implementation is the cheap way to find this out: if
   weakening the code does not fail the property, the property was decoration.
+- **A Swoosh mailbox is per test process and keeps everything.** Every fixture
+  user that registers sends a confirmation email, so `assert_email_sent/1` reads
+  *that* one unless the mailbox is drained after the fixtures and immediately
+  before the assertion. Draining once in `setup` is not enough when a test
+  creates more users than the setup did.
+- **`Oban.Testing.perform_job/3` calls the worker directly** and does not consume
+  the scheduled row, so a job stays queued after it has been run in a test.
 - **Application env is global, so a test that flips it cannot be `async: true`.**
   `UrlGuardTest` toggles `:allow_private_targets` and, while async, failed
   unrelated modules whose fixtures were saving a service URL at that moment. The

@@ -111,7 +111,11 @@ defmodule PulseOpsWeb.NotifierLive.Form do
   # An unchecked checkbox submits nothing, so the changeset would never see the
   # toggle turned off. Falling back to "false" keeps the boolean honest in both
   # directions.
-  defp normalize(params), do: Map.put_new(params, "enabled", "false")
+  defp normalize(params) do
+    params
+    |> Map.put_new("enabled", "false")
+    |> Map.put_new("escalation_only", "false")
+  end
 
   defp assign_form(socket, changeset) do
     assign(socket, :form, to_form(changeset))
@@ -230,6 +234,18 @@ defmodule PulseOpsWeb.NotifierLive.Form do
                 />
                 <p class="mt-1 text-xs text-base-content/50">
                   When off, the notifier is kept but nothing is sent to it.
+                </p>
+              </div>
+
+              <div class="mt-4">
+                <.input
+                  field={@form[:escalation_only]}
+                  type="checkbox"
+                  label="Only for escalations"
+                />
+                <p class="mt-1 text-xs text-base-content/50">
+                  Stays quiet for ordinary incidents. Told only when a critical one has gone
+                  unacknowledged — which is the point of having a second line.
                 </p>
               </div>
             </.card>

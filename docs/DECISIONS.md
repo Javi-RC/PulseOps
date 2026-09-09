@@ -423,6 +423,66 @@ a service nobody wants to hear about — and the way to say that is to disable i
 
 ---
 
+## ADR-015 — Flap detection counts incidents, and escalation is decided at the end
+
+**Decision.** A service that has opened `flap_threshold` incidents inside
+`flap_window_seconds` is treated as oscillating. Its per-incident notifications
+stop and a single `DigestJob` is scheduled instead, made unique per service so
+everything arriving while it waits collapses into it. The digest counts when it
+**runs**, not when it was scheduled.
+
+A critical incident schedules an `EscalationJob` for
+`escalation_after_seconds` later. When that job runs it re-reads the incident
+and does nothing unless it is still open and still unacknowledged.
+
+Acknowledgement is its own field, not a workflow status. Notifiers gain
+`escalation_only`, which keeps a channel silent until an escalation.
+
+**Why count incidents rather than track transitions.** A flap is a service
+crossing its threshold repeatedly, and every crossing already produces exactly
+one incident row with a `started_at`. Counting those is one indexed query and
+needs no new bookkeeping — and, more usefully, it measures **the thing people
+actually receive**. A definition based on raw check results would count
+oscillations nobody was ever told about, which is not what "flapping" means to
+somebody being paged.
+
+**Why the digest counts at run time.** The interesting number is how often the
+service moved *in total*, and at schedule time only the first crossing has
+happened. Counting late means the message describes what occurred rather than
+what had occurred when the storm began.
+
+**Why escalation is decided when the job runs.** The alternative is to find and
+cancel the scheduled job when somebody acknowledges or resolves. That means
+knowing the job's id, handling the case where it has already started, and
+getting it right in three places — acknowledge, resolve, and the automatic
+recovery. Re-reading the incident at the end is one check in one place, and it
+is correct by construction: whatever happened in between, the question asked is
+the one that matters.
+
+**Why acknowledgement is not a status.** Moving an incident to `:investigating`
+says something about the incident; acknowledging says something about the
+people — somebody has this. In the first minute of an outage both are true and
+neither implies the other, and conflating them means you cannot say "I have seen
+this" without also claiming to have diagnosed it.
+
+**Rejected.** *Suppressing notifications with an Oban `unique` on `NotifyJob`
+alone.* Collapses duplicates but says nothing: the receiver gets one arbitrary
+message out of ten and no indication that ten happened.
+
+*Escalating to a fixed second address.* An organization's second line is a
+channel like any other, and modelling it as one means it inherits the service
+narrowing, the pausing and the assignment that already exist.
+
+*Escalating only to the escalation-only channels.* Nobody picked the incident
+up, so making **more** noise is the intent; excluding the people already told
+would make an escalation quieter than the page that preceded it.
+
+**Consequence.** An escalation-only channel with nothing else configured hears
+nothing at all, which is correct and can look like a broken configuration — the
+form says so where it is set.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

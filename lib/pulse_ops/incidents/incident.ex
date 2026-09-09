@@ -28,10 +28,12 @@ defmodule PulseOps.Incidents.Incident do
     field :cause, :string
     field :started_at, :utc_datetime
     field :resolved_at, :utc_datetime
+    field :acknowledged_at, :utc_datetime
 
     belongs_to :service, Service
     belongs_to :organization, Organization
     belongs_to :resolved_by, User
+    belongs_to :acknowledged_by, User
 
     has_many :events, IncidentEvent, preload_order: [asc: :occurred_at]
 

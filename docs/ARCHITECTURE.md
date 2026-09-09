@@ -154,6 +154,9 @@ organizations ──┬── organization_members ──── users
   suppresses reconciliation for a grace period, so it reads as a snooze rather
   than being undone on the next probe (ADR-009).
 - `incident_events` — the timeline; `user_id` is null for automatic events.
+  `acknowledged_at` on the incident is deliberately not a workflow status:
+  `:investigating` says something about the incident, acknowledging says
+  somebody has it, and in the first minute both are true (ADR-015).
 - `notifiers` — where an organization is told about incidents: a `:webhook` (URL +
   optional bearer `secret_token`) or an `:email`, with `enabled` to pause without
   deleting. A notifier is `:organization`-scoped and may be narrowed to a single
@@ -162,6 +165,10 @@ organizations ──┬── organization_members ──── users
   webhooks the assignments record who is responsible for the channel. When an
   incident opens or resolves, `PulseOps.Notifications` queues one `NotifyJob` per
   matching enabled notifier; a slow receiver never blocks the monitor.
+  `escalation_only` keeps a channel silent until a critical incident has gone
+  unacknowledged. A service that opens too many incidents inside the flap window
+  stops sending per-incident messages and sends one `DigestJob` instead, unique
+  per service so a storm becomes a message (ADR-015).
 
 ## Outbound requests
 

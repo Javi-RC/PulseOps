@@ -295,7 +295,7 @@ defmodule PulseOps.Incidents do
     scope
     |> incidents_query()
     |> where([i], i.id == ^id)
-    |> preload([:service, :resolved_by, events: :user])
+    |> preload([:service, :resolved_by, :acknowledged_by, events: :user])
     |> Repo.one!()
   end
 
@@ -367,6 +367,98 @@ defmodule PulseOps.Incidents do
           {:error, changeset}
       end
     end
+  end
+
+  @doc """
+  Whether a service is oscillating rather than simply broken.
+
+  Counts the incidents it has opened inside the flap window. A service that
+  crosses its threshold repeatedly opens and closes an incident each time, so
+  the count of *openings* is the flap signal — no extra bookkeeping, and it
+  measures the thing people actually receive.
+  """
+  @spec flapping?(Service.t(), DateTime.t()) :: boolean()
+  def flapping?(service, now \\ DateTime.utc_now())
+
+  def flapping?(%Service{id: service_id}, now) do
+    threshold = Notifications.flap_threshold()
+    since = DateTime.add(now, -Notifications.flap_window_seconds(), :second)
+
+    count =
+      Repo.aggregate(
+        from(i in Incident, where: i.service_id == ^service_id and i.started_at >= ^since),
+        :count
+      )
+
+    count >= threshold
+  end
+
+  @doc """
+  Marks an incident as being looked at, which stops it escalating.
+
+  Deliberately not a workflow status. Moving an incident to `:investigating`
+  says something about the incident; acknowledging says something about the
+  people — somebody has this. In the first minute of an outage both are true and
+  neither implies the other.
+  """
+  @spec acknowledge_incident(Scope.t(), Incident.t()) ::
+          {:ok, Incident.t()} | {:error, :unauthorized | :already_resolved | Ecto.Changeset.t()}
+  def acknowledge_incident(%Scope{} = scope, %Incident{} = incident) do
+    true = incident.organization_id == scope.organization.id
+
+    with :ok <- Organizations.authorize(scope, :respond_to_incidents),
+         :ok <- ensure_open(incident) do
+      Multi.new()
+      |> Multi.update(
+        :incident,
+        Ecto.Changeset.change(incident,
+          acknowledged_at: DateTime.utc_now(:second),
+          acknowledged_by_id: scope.user.id
+        )
+      )
+      |> Multi.insert(:event, fn %{incident: updated} ->
+        IncidentEvent.changeset(%IncidentEvent{}, %{
+          incident_id: updated.id,
+          user_id: scope.user.id,
+          type: :acknowledged,
+          description: "Acknowledged"
+        })
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{incident: updated}} ->
+          broadcast(scope.organization.id, {:incident_updated, updated})
+          {:ok, updated}
+
+        {:error, :incident, changeset, _changes} ->
+          {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
+  Whether an incident is still waiting for somebody to pick it up.
+  """
+  @spec unacknowledged?(Incident.t()) :: boolean()
+  def unacknowledged?(%Incident{acknowledged_at: nil, resolved_at: nil}), do: true
+  def unacknowledged?(%Incident{}), do: false
+
+  @doc """
+  Writes an escalation onto the timeline, so the record shows that nobody picked
+  the incident up rather than only that somebody eventually did.
+  """
+  @spec record_escalation(Incident.t()) :: :ok
+  def record_escalation(%Incident{} = incident) do
+    %IncidentEvent{}
+    |> IncidentEvent.changeset(%{
+      incident_id: incident.id,
+      type: :escalated,
+      description: "No acknowledgement, so the escalation channels were told"
+    })
+    |> Repo.insert()
+
+    broadcast(incident.organization_id, {:incident_updated, incident})
+    :ok
   end
 
   @doc """

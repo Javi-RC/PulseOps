@@ -81,6 +81,16 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## Notifications that stay signal
+
+A service oscillating on its threshold sends **one** message saying how often it
+moved, not one per crossing. A critical incident that nobody acknowledges within
+the escalation window reaches the channels marked "only for escalations", which
+stay silent the rest of the time.
+
+Acknowledging an incident is separate from moving it to *investigating*: it says
+somebody has this, which is what stops the escalation.
+
 ## Maintenance windows
 
 Schedule a window before a deploy and PulseOps stops paging for it. The probes

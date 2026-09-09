@@ -64,6 +64,15 @@ config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual
 # behaviour itself is covered by a test that sets its own window.
 config :pulse_ops, :incident_reopen_grace_seconds, 0
 
+# Tests set whatever they need for the case in hand; these are the values the
+# ones that do not care get. Escalation is off unless a test asks for it, or
+# every incident test would leave a scheduled job behind.
+config :pulse_ops, :notifications,
+  flap_threshold: 3,
+  flap_window_seconds: 600,
+  digest_delay_seconds: 0,
+  escalation_after_seconds: nil
+
 # No debounce window, so the dashboard re-reads inside the broadcast callback and
 # a test can render immediately afterwards. Deferring by a message would land
 # behind a render call already queued. The coalescing itself is covered by a
