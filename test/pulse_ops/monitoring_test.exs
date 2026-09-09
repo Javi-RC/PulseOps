@@ -6,6 +6,7 @@ defmodule PulseOps.MonitoringTest do
 
   alias PulseOps.Monitoring
   alias PulseOps.Monitoring.HealthCheck.Result
+  alias PulseOps.Monitoring.Rollup
   alias PulseOps.Monitoring.Service
 
   @invalid_attrs %{
@@ -375,6 +376,163 @@ defmodule PulseOps.MonitoringTest do
 
   defp minutes_from_now(minutes), do: DateTime.add(DateTime.utc_now(), minutes * 60, :second)
 
+  describe "rollups" do
+    setup do
+      scope = organization_scope_fixture()
+      %{scope: scope, service: service_fixture(scope)}
+    end
+
+    # Backdates checks into a finished hour, which is the only way to exercise
+    # the rollup half: the current hour is always read from raw rows.
+    defp backdate(checks, hours_ago) do
+      at = DateTime.add(DateTime.utc_now(), -hours_ago * 3600, :second)
+      ids = Enum.map(checks, & &1.id)
+
+      Repo.update_all(
+        from(c in PulseOps.Monitoring.Check, where: c.id in ^ids),
+        set: [inserted_at: at]
+      )
+
+      at
+    end
+
+    defp record_many(service, entries) do
+      Enum.map(entries, fn {status, ms} ->
+        {:ok, check} = record(service, status, ms)
+        check
+      end)
+    end
+
+    test "roll_up_hour/1 aggregates an hour into one row per service", %{service: service} do
+      checks =
+        record_many(service, [{:healthy, 20}, {:healthy, 80}, {:degraded, 400}, {:down, nil}])
+
+      at = backdate(checks, 2)
+
+      assert Monitoring.roll_up_hour(at) == 1
+
+      rollup = Repo.one!(from r in Rollup, where: r.service_id == ^service.id)
+
+      assert rollup.total == 4
+      assert rollup.up == 3
+      assert rollup.degraded == 1
+      assert rollup.down == 1
+      # The failed check recorded no response time, so it is not in the latency
+      # figures at all.
+      assert rollup.latency_count == 3
+      assert rollup.latency_sum == 500
+      assert rollup.latency_max == 400
+      assert rollup.latency_le_25 == 1
+      assert rollup.latency_le_100 == 2
+      assert rollup.latency_le_500 == 3
+    end
+
+    test "roll_up_hour/1 recomputes rather than accumulating", %{service: service} do
+      checks = record_many(service, [{:healthy, 20}, {:down, nil}])
+      at = backdate(checks, 2)
+
+      Monitoring.roll_up_hour(at)
+      Monitoring.roll_up_hour(at)
+      Monitoring.roll_up_hour(at)
+
+      rollup = Repo.one!(from r in Rollup, where: r.service_id == ^service.id)
+
+      assert rollup.total == 2, "a rerun must upsert, not add to what is there"
+      assert Repo.aggregate(Rollup, :count) == 1
+    end
+
+    test "uptime_by_service/2 agrees with counting the raw checks", %{
+      scope: scope,
+      service: service
+    } do
+      old = record_many(service, [{:healthy, 10}, {:healthy, 10}, {:down, nil}])
+      backdate(old, 3) |> Monitoring.roll_up_hour()
+
+      # One more in the current hour, which no rollup covers yet.
+      record_many(service, [{:healthy, 10}])
+
+      # 3 up out of 4 overall.
+      assert_in_delta Monitoring.uptime_by_service(scope)[service.id], 75.0, 0.001
+    end
+
+    test "uptime_by_service/2 adds the current hour to the rolled-up ones", %{
+      scope: scope,
+      service: service
+    } do
+      old = record_many(service, [{:healthy, 10}, {:healthy, 10}])
+      backdate(old, 2) |> Monitoring.roll_up_hour()
+
+      assert Monitoring.uptime_by_service(scope)[service.id] == 100.0
+
+      # A failure now must move the figure even though it is in no rollup.
+      record_many(service, [{:down, nil}, {:down, nil}])
+
+      assert_in_delta Monitoring.uptime_by_service(scope)[service.id], 50.0, 0.001
+    end
+
+    test "service_metrics/3 merges the rolled-up histogram with the current hour", %{
+      scope: scope,
+      service: service
+    } do
+      old = record_many(service, [{:healthy, 20}, {:healthy, 30}, {:healthy, 40}])
+      backdate(old, 2) |> Monitoring.roll_up_hour()
+
+      record_many(service, [{:healthy, 20}, {:down, nil}])
+
+      metrics = Monitoring.service_metrics(scope, service)
+
+      assert metrics.total == 5
+      assert metrics.up == 4
+      assert metrics.down == 1
+      assert_in_delta metrics.uptime_percent, 80.0, 0.001
+      # Four measured responses, all between 20 and 40 ms, so every percentile
+      # has to land inside the bucket that contains them.
+      assert metrics.p50 <= 50
+      assert metrics.p95 <= 50
+    end
+
+    test "service_metrics/3 is empty when nothing was recorded", %{
+      scope: scope,
+      service: service
+    } do
+      assert Monitoring.service_metrics(scope, service) == %{
+               total: 0,
+               up: 0,
+               down: 0,
+               uptime_percent: nil,
+               p50: nil,
+               p95: nil,
+               p99: nil
+             }
+    end
+
+    test "backfill_rollups/1 covers every finished hour in the range", %{service: service} do
+      for hours_ago <- 1..3 do
+        service |> record_many([{:healthy, 10}]) |> backdate(hours_ago)
+      end
+
+      assert Monitoring.backfill_rollups(3) == 3
+      assert Repo.aggregate(Rollup, :count) == 3
+    end
+
+    test "a rollup belonging to another organization is not counted", %{
+      scope: scope,
+      service: service
+    } do
+      other = organization_scope_fixture()
+      their_service = service_fixture(other)
+
+      service |> record_many([{:healthy, 10}]) |> backdate(2)
+      their_service |> record_many([{:down, nil}]) |> backdate(2)
+      Monitoring.backfill_rollups(3)
+
+      uptime = Monitoring.uptime_by_service(scope)
+
+      assert Map.has_key?(uptime, service.id)
+      refute Map.has_key?(uptime, their_service.id)
+    end
+  end
+
   describe "change_service/3" do
     test "returns a changeset" do
       scope = organization_scope_fixture()
@@ -403,6 +561,70 @@ defmodule PulseOps.MonitoringTest do
 
       assert %PulseOps.Monitoring.Check{} =
                Repo.get(PulseOps.Monitoring.Check, recent.id)
+    end
+
+    test "deletes in bounded batches rather than one unbounded statement" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      expired =
+        for _ <- 1..25 do
+          {:ok, check} = record(service, :down, nil)
+          check.id
+        end
+
+      {25, nil} =
+        Repo.update_all(
+          from(c in PulseOps.Monitoring.Check, where: c.id in ^expired),
+          set: [inserted_at: DateTime.add(DateTime.utc_now(), -31, :day)]
+        )
+
+      {:ok, fresh} = record(service, :healthy, 10)
+
+      {deleted, statements} =
+        count_deletes(fn -> Monitoring.prune_old_checks(30, batch_size: 10) end)
+
+      assert deleted == 25
+      # 10, 10, then a short batch of 5 that says the backlog is exhausted.
+      assert statements == 3
+
+      assert %PulseOps.Monitoring.Check{} = Repo.get(PulseOps.Monitoring.Check, fresh.id)
+    end
+  end
+
+  # Counts the DELETE statements issued while running fun, so "in batches" is
+  # actually asserted rather than inferred from the row count.
+  defp count_deletes(fun) do
+    test_pid = self()
+    ref = make_ref()
+    handler_id = {:retention_delete_counter, ref}
+
+    :telemetry.attach(
+      handler_id,
+      [:pulse_ops, :repo, :query],
+      fn _event, _measurements, metadata, _config ->
+        if self() == test_pid and String.starts_with?(metadata.query, "DELETE") do
+          send(test_pid, {ref, :delete})
+        end
+      end,
+      nil
+    )
+
+    result =
+      try do
+        fun.()
+      after
+        :telemetry.detach(handler_id)
+      end
+
+    {result, drain_deletes(ref, 0)}
+  end
+
+  defp drain_deletes(ref, count) do
+    receive do
+      {^ref, :delete} -> drain_deletes(ref, count + 1)
+    after
+      0 -> count
     end
   end
 end

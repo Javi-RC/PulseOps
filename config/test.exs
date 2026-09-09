@@ -25,6 +25,7 @@ config :pulse_ops, PulseOpsWeb.Endpoint,
 
 # In test we don't send emails
 config :pulse_ops, PulseOps.Mailer, adapter: Swoosh.Adapters.Test
+config :pulse_ops, PulseOps.Notifications.Mailer, adapter: Swoosh.Adapters.Test
 
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
@@ -58,4 +59,24 @@ config :pulse_ops, health_check_client: PulseOps.Monitoring.HealthCheckMock
 config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual
 
 # Route every webhook delivery through the Req.Test stub so nothing touches the network.
+# No grace period on reopening: tests drive probes explicitly, so waiting out a
+# real window would only make them slow and timing-dependent. The suppression
+# behaviour itself is covered by a test that sets its own window.
+config :pulse_ops, :incident_reopen_grace_seconds, 0
+
+# No debounce window, so the dashboard re-reads inside the broadcast callback and
+# a test can render immediately afterwards. Deferring by a message would land
+# behind a render call already queued. The coalescing itself is covered by a
+# test that sets its own window.
+config :pulse_ops, :dashboard_debounce_ms, 0
+
+# Fixtures use hosts that do not resolve, and the suite must not perform DNS
+# lookups. UrlGuard's own tests turn the check on explicitly.
+config :pulse_ops, :allow_private_targets, true
+
+# Most tests swap the whole HealthCheck behaviour for a Mox mock. The tests for
+# the real Req-backed client cannot do that — they are testing it — so it gets
+# the same Req.Test treatment the webhook sender has.
+config :pulse_ops, health_check_transport: :stub
+
 config :pulse_ops, webhook_client: :stub

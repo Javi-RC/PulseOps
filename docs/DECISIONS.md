@@ -95,6 +95,122 @@ on every single probe, for as long as the outage lasts.
 
 ---
 
+## ADR-009 — Reconciliation is continuous, not only at startup
+
+**Decision.** Extends ADR-008. A monitor reconciles incident state after *every*
+probe that does not produce a status transition, not only once in
+`handle_continue/2` at boot. The decision itself moved into the context, as
+`Incidents.reconcile_incident/3`: it reads the current state and acts only where
+it diverges from what the monitor just observed.
+
+Resolving an incident by hand on a service that has *not* recovered is read as
+"snooze this outage", so reconciliation waits `:incident_reopen_grace_seconds`
+(300 s in production, 0 in the test suite) before reopening. Only this path is
+suppressed — a genuine transition back to `:down` always opens an incident.
+Reopening creates a **new** incident row whose first timeline event is typed
+`:reopened`, rather than reviving the resolved one.
+
+**Why.** ADR-008 held the invariant "a down service has an open incident" across
+restarts, but only across restarts. Between them, the incident hook fires only on
+a status *transition*, and a service already sitting at `:down` never transitions
+again. So anything that removed the incident while the outage continued — in
+practice, a person resolving it in the UI — left the service down indefinitely
+with no incident and no further notifications, and it did not heal until a
+redeploy. That is the exact invariant ADR-008 exists to protect, so the fix
+belongs at the same level: reconcile on the cycle the monitor already has.
+
+The grace period is what keeps this from fighting the user. Without it the next
+probe undoes a deliberate action seconds later, which is both useless and a
+notification storm. Splitting transitions from reconciliation is what keeps the
+grace period honest: a flat "do not reopen for five minutes" would also swallow a
+genuinely new outage that started inside the window.
+
+**Rejected.** *Calling `open_incident/2` after every check while down* — which is
+what ADR-008 rejected, and still the wrong shape: it is an insert that fails on
+the unique constraint on every single probe for the whole outage. Reconciliation
+reads first and writes only on divergence, so a steady outage costs one indexed
+`SELECT` per probe, served by the partial unique index that already exists.
+
+*A separate reconciliation timer, or a periodic Oban job.* The probe cycle is
+already the natural reconciliation period and is bounded below by the minimum
+check interval. A second mechanism would add scheduling, jitter and failure modes
+for no gain in coverage.
+
+*Having `resolve_incident/3` notify the monitor.* It couples a user-facing
+context function to a process, and it only closes the hole we happened to think
+of. The invariant should hold regardless of *how* the incident went missing.
+
+*Reopening the resolved incident row.* It would erase the resolution and the
+person who made it, and the partial unique index (ADR-004) makes a second row
+free anyway. Two rows tell the truth: somebody closed this, and the outage
+carried on.
+
+**Consequence.** `incident_events.type` gained `:reopened`. The column is a
+string, so no migration was needed.
+
+---
+
+## ADR-010 — Metrics come from hourly rollups, and latency is a histogram
+
+**Decision.** `service_check_rollups` holds one row per service per hour, built
+by an hourly Oban job that recomputes and upserts rather than appending.
+`uptime_by_service/2` and `service_metrics/3` read rollups for every complete
+hour and raw `service_checks` for the current, still-filling one, and add the
+two together. `since` is aligned down to the hour.
+
+Latency is stored as a **cumulative histogram** — `latency_le_100` is the number
+of checks in that hour answering in 100 ms or less — plus a count, a sum and a
+maximum. Percentiles are interpolated out of the merged histogram.
+
+**Why rollups.** `service_checks` grows at `86,400 / interval` rows per service
+per day; 100 services at 30 s is about 29M rows a month. Both figures on the
+dashboard aggregated over those raw rows, so the cost of opening a page scaled
+with the *retention window* — a configuration value. Someone lengthening
+retention to keep more history would have made the dashboard slower with no
+obvious connection between the two. Against the development database this
+replaced 17,247 raw rows with 142 rollup rows for the same numbers.
+
+**Why a histogram and not three percentile columns.** Counts merge across hours
+by addition, so uptime over a day is exact from 24 rollup rows. Percentiles do
+not merge. The p95 of a day is neither the average of 24 hourly p95s nor the p95
+of them, and there is no way to recover it from them. Storing hourly percentiles
+would have produced a number that looks authoritative and is wrong by an amount
+nobody can bound.
+
+A cumulative histogram does merge by addition, because each bucket is a count.
+Summing `latency_le_100` across 24 rows gives the true number of sub-100 ms
+checks in the day, and a percentile interpolated from the merged buckets is
+wrong by at most the width of the bucket it lands in. That is the trade actually
+being made: **bounded error instead of unbounded error**, in exchange for eight
+integer columns.
+
+**Rejected.** *Hourly p50/p95/p99 columns.* Simpler, and quietly wrong — the
+failure mode is a plausible number, which is worse than an obviously missing one.
+
+*t-digest or a similar sketch.* Mergeable and far more accurate in the tail, and
+a great deal of machinery to maintain for a health-check response time where
+bucket-width error is already well inside what anyone acts on.
+
+*Rolling up the current hour too.* The row would be stale the moment the next
+probe landed, and reads would have to correct for it anyway. Reading the current
+hour from raw checks costs one bounded query — an hour of one service is at most
+360 rows at the minimum interval.
+
+*Dropping raw checks once rolled up.* The chart on the service page plots
+individual probes, and an incident's cause is often a single slow response.
+Retention already handles that, separately and on its own schedule.
+
+**Consequence.** Aligning `since` down to the hour means a "last 24 hours"
+figure covers from the top of that hour, so up to 25 hours. The alternative was
+a third query for the partial leading hour, which is a lot of machinery for a
+window whose edge nobody reads to the minute.
+
+A new installation needs its history rolled up once, which
+`backfill_service_check_rollups` does in one SQL statement at migration time.
+Without it, every finished hour would simply be missing from the dashboard.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

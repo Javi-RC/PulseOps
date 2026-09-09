@@ -19,6 +19,7 @@ defmodule PulseOps.Notifications.WebhookSender do
   """
 
   alias PulseOps.Incidents.Incident
+  alias PulseOps.Monitoring.UrlGuard
   alias PulseOps.Notifications.Notifier
 
   @receive_timeout_ms 10_000
@@ -26,8 +27,17 @@ defmodule PulseOps.Notifications.WebhookSender do
   @doc """
   Sends one notification. Returns `:ok` or `{:error, reason}`.
   """
-  def deliver(%Notifier{url: url, secret_token: secret}, %Incident{} = incident, event)
+  def deliver(%Notifier{url: url} = notifier, %Incident{} = incident, event)
       when event in ["opened", "resolved"] do
+    # Re-checked immediately before the request, not only when the notifier was
+    # saved: the host can be repointed at a private address in between.
+    case UrlGuard.validate(url) do
+      :ok -> post(notifier, incident, event)
+      {:error, reason} -> {:error, {:blocked_target, reason}}
+    end
+  end
+
+  defp post(%Notifier{url: url, secret_token: secret}, %Incident{} = incident, event) do
     headers = [{"user-agent", "PulseOps"}]
     headers = if secret, do: [{"authorization", "Bearer #{secret}"} | headers], else: headers
 

@@ -4,12 +4,13 @@ defmodule PulseOps.MixProject do
   def project do
     [
       app: :pulse_ops,
-      version: "0.2.0",
+      version: "0.3.0",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       test_ignore_filters: [&String.starts_with?(&1, "test/support/")],
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
+      test_coverage: test_coverage(),
       deps: deps(),
       dialyzer: dialyzer(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
@@ -78,6 +79,7 @@ defmodule PulseOps.MixProject do
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
       {:telemetry_metrics, "~> 1.0"},
+      {:telemetry_metrics_prometheus_core, "~> 1.2"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
@@ -107,6 +109,32 @@ defmodule PulseOps.MixProject do
   #     $ mix setup
   #
   # See the documentation for `Mix` for more info on aliases.
+  # Coverage is a ratchet, not a target: the threshold sits just under what the
+  # suite actually achieves, so it catches a drop rather than inviting tests
+  # written to move a number.
+  defp test_coverage do
+    [
+      summary: [threshold: 90],
+      ignore_modules: [
+        # Test support is test code. Counting it flatters the figure, because it
+        # is exercised by definition.
+        PulseOps.DataCase,
+        PulseOpsWeb.ConnCase,
+        ~r/^PulseOps\..*Fixtures$/,
+        # Exists only to break a service on purpose during a demo, and is not
+        # routed outside development.
+        PulseOpsWeb.Flaky,
+        PulseOpsWeb.FlakyController,
+        # Generated shells carrying no logic of ours.
+        PulseOpsWeb.Gettext,
+        PulseOps.Repo,
+        PulseOpsWeb.Endpoint,
+        PulseOpsWeb.PageHTML,
+        PulseOpsWeb.ErrorHTML
+      ]
+    ]
+  end
+
   defp aliases do
     [
       setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
@@ -125,7 +153,7 @@ defmodule PulseOps.MixProject do
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --strict",
-        "test",
+        "test --cover",
         "dialyzer"
       ]
     ]

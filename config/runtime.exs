@@ -20,6 +20,13 @@ if System.get_env("PHX_SERVER") do
   config :pulse_ops, PulseOpsWeb.Endpoint, server: true
 end
 
+# Prometheus scraping is off unless a token is set, and /metrics 404s without
+# one. Operational metrics say a lot about who is using an installation, so
+# they are not public by default.
+if token = System.get_env("METRICS_TOKEN") do
+  config :pulse_ops, :metrics_token, token
+end
+
 config :pulse_ops, PulseOpsWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
@@ -42,13 +49,15 @@ end
 
 if config_env() in [:dev, :prod] do
   # Real email delivery for the incident notifier. When BREVO_API_KEY is set the
-  # mailer switches to Brevo (SendInBlue); otherwise development keeps the Local
-  # adapter whose inbox lives at /dev/mailbox. The from address must belong to a
-  # sender verified in the Brevo account.
+  # notifications mailer switches to Brevo (SendInBlue); otherwise development
+  # keeps the Local adapter whose inbox lives at /dev/mailbox. The login/auth
+  # mailer (PulseOps.Mailer) is unaffected and always uses the Local adapter
+  # in dev, so magic-link emails keep landing at /dev/mailbox. The from address
+  # must belong to a sender verified in the Brevo account.
   if api_key = System.get_env("BREVO_API_KEY") do
     config :swoosh, :api_client, Swoosh.ApiClient.Req
 
-    config :pulse_ops, PulseOps.Mailer,
+    config :pulse_ops, PulseOps.Notifications.Mailer,
       adapter: Swoosh.Adapters.Brevo,
       api_key: api_key,
       from: System.get_env("MAILER_FROM", "contact@example.com"),

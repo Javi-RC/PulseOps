@@ -103,6 +103,19 @@ defmodule PulseOpsWeb.NotifierLive.Index do
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <p class="truncate text-sm font-medium">{notifier.name}</p>
+                <span
+                  :if={notifier.service}
+                  class="inline-flex items-center rounded-full bg-base-300 px-2 py-0.5 text-xs font-medium text-base-content"
+                >
+                  <.icon name="lucide-server" class="size-3.5" />
+                  {notifier.service.name}
+                </span>
+                <span
+                  :if={is_nil(notifier.service)}
+                  class="inline-flex items-center rounded-full bg-base-300 px-2 py-0.5 text-xs font-medium text-base-content/60"
+                >
+                  All services
+                </span>
                 <%= if notifier.enabled do %>
                   <span class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
                     Active
@@ -113,7 +126,12 @@ defmodule PulseOpsWeb.NotifierLive.Index do
                   </span>
                 <% end %>
               </div>
-              <p class="mt-0.5 truncate text-xs text-base-content/50">{destination(notifier)}</p>
+              <div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p class="truncate text-xs text-base-content/50">{destination(notifier)}</p>
+                <p :if={notifier.assigned_users != []} class="truncate text-xs text-base-content/50">
+                  {Enum.map_join(notifier.assigned_users, ", ", & &1.email)}
+                </p>
+              </div>
             </div>
             <%= if @can_manage? do %>
               <div class="flex items-center gap-1">
@@ -158,5 +176,5 @@ defmodule PulseOpsWeb.NotifierLive.Index do
   end
 
   defp destination(%{type: :webhook, url: url}), do: url
-  defp destination(%{type: :email, recipient: recipient}), do: recipient
+  defp destination(%{type: :email}), do: "Email to assigned members"
 end

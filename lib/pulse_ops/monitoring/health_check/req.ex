@@ -6,9 +6,25 @@ defmodule PulseOps.Monitoring.HealthCheck.Req do
   @behaviour PulseOps.Monitoring.HealthCheck
 
   alias PulseOps.Monitoring.HealthCheck.Result
+  alias PulseOps.Monitoring.UrlGuard
 
   @impl true
   def check(url, opts \\ []) do
+    case UrlGuard.validate(url) do
+      :ok ->
+        probe(url, opts)
+
+      # Checked again here rather than trusting the changeset: the host can be
+      # repointed at a private address after the service was saved, and the
+      # probe runs on a schedule for as long as the service exists. Recorded as
+      # a failed check, so the reason shows up on the service instead of the
+      # probe silently never happening.
+      {:error, reason} ->
+        {:error, %Result{error: "blocked target: #{UrlGuard.message(reason)}"}}
+    end
+  end
+
+  defp probe(url, opts) do
     timeout = Keyword.get(opts, :timeout_ms, 5_000)
     started = System.monotonic_time(:millisecond)
 
@@ -16,6 +32,7 @@ defmodule PulseOps.Monitoring.HealthCheck.Req do
       Req.get(url,
         receive_timeout: timeout,
         connect_options: [timeout: timeout],
+        plug: plug(),
         # Retries are the state machine's decision, not the client's: a silent
         # retry here would hide a failure the monitor needs to count.
         retry: false,
@@ -40,6 +57,16 @@ defmodule PulseOps.Monitoring.HealthCheck.Req do
 
       {:error, exception} ->
         {:error, %Result{response_time_ms: elapsed, error: describe(exception)}}
+    end
+  end
+
+  # The same seam the webhook sender uses: tests route the request through a
+  # Req.Test plug so this module's own mapping of responses to results can be
+  # exercised without the network. Everything else goes over the wire.
+  defp plug do
+    case Application.get_env(:pulse_ops, :health_check_transport, :http) do
+      :stub -> {Req.Test, :health_check}
+      :http -> nil
     end
   end
 

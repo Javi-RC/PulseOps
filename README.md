@@ -6,7 +6,9 @@ Elixir, Phoenix LiveView and OTP.
 PulseOps watches each registered service from its own supervised process, decides
 when a service is genuinely down rather than briefly flaky, opens and resolves
 incidents on its own, and pushes every state change to connected dashboards over
-WebSockets. Nothing polls.
+WebSockets. Nothing polls — the dashboard coalesces a burst of changes into one
+refresh a quarter of a second later, so a flapping service costs one reload
+rather than one per change.
 
 ## What it does
 
@@ -22,9 +24,10 @@ WebSockets. Nothing polls.
 - **Alert on your terms** — each service, or the whole organization, has an alert
   rule: how many failed probes open an incident, how many successes close it, and
   the severity it is reported as.
-- **Never miss an incident** — a generic webhook (Discord, Teams, ntfy, Make…) and
-  an email channel per organization, each with its own queue and retry budget, so
-  a slow receiver never slows the monitor that spotted the incident.
+- **Never miss an incident** — a generic webhook (Discord, Teams, ntfy, Make…) or
+  an email to your team, each per-organization and optionally narrowed to a single
+  service, with its own queue and retry budget, so a slow receiver never slows the
+  monitor that spotted the incident.
 - **Share an organization** — invite people, give them one of four roles
   (owner, admin, member, viewer) and change them later. Authorization is enforced
   in the domain layer, not by hiding buttons.
@@ -34,19 +37,35 @@ WebSockets. Nothing polls.
 Start here, in this order:
 
 1. [`docs/PROGRESS.md`](docs/PROGRESS.md) — current state, what is done, what is next.
-2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
-3. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
+2. [`docs/ROADMAP.md`](docs/ROADMAP.md) — audited defects, priorities and the phased plan.
+3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
+4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
+
+## Metrics
+
+PulseOps exposes its own health to Prometheus at `/metrics`, behind a bearer
+token — set `METRICS_TOKEN` to enable it, and without one the endpoint returns
+404 rather than advertising itself. The series describe *PulseOps*: probe
+volumes and response times, Oban job outcomes, request and query latency. They
+carry no `service_id` label, because per-service figures live in the database
+and a label per tenant's service is how a Prometheus server falls over.
 
 ## Running it
 
 Everything runs in Docker; no Elixir installation is required on the host.
 
 ```bash
+cp .env.example .env                      # optional; the compose file reads .env
 docker compose build
 docker compose run --rm web mix deps.get
 docker compose run --rm web mix ecto.setup   # migrates and seeds demo data
 docker compose up web
 ```
+
+Without `.env` Docker Compose refuses to start, so create it from
+`.env.example` first. With `BREVO_API_KEY` set, incident emails are actually
+sent through Brevo; without it they land in the development mailbox at
+`/dev/mailbox`.
 
 The app is served at http://localhost:4000. Register an account, or log in as the
 seeded `demo@pulseops.test` — magic-link emails are captured at `/dev/mailbox`.
@@ -157,7 +176,8 @@ Docker · ExUnit · Mox · Credo · Dialyzer · GitHub Actions
 
 ## Not built yet
 
-Notifications (Slack, email, webhooks), metric rollups, an activity log,
+Slack (the generic webhook channel already speaks its format, but an official
+Slack app/bolt integration is not built), metric rollups, an activity log,
 clustering with leader election, and Prometheus/Grafana export. The groundwork is
 in place: `:telemetry` already emits per-check events, Oban runs nightly
 retention jobs, and the partial unique index is what will make clustering safe.

@@ -21,10 +21,12 @@ defmodule PulseOps.Monitoring.AlertRule do
   use Ecto.Schema
 
   import Ecto.Changeset
+  import Ecto.Query, only: [from: 2]
 
   alias PulseOps.Accounts.Scope
   alias PulseOps.Monitoring.Service
   alias PulseOps.Organizations.Organization
+  alias PulseOps.Repo
 
   @severities [:low, :medium, :high, :critical]
 
@@ -89,8 +91,45 @@ defmodule PulseOps.Monitoring.AlertRule do
     )
     |> validate_number(:degraded_ratio, greater_than: 0.0, less_than_or_equal_to: 1.0)
     |> put_change(:organization_id, organization_scope.organization.id)
+    |> validate_service_scope()
     |> unique_constraint(:service_id, message: "this service already has an alert rule")
+    # The database, not the form, is what guarantees a single organization
+    # default. Reported against :service_id because that is the field the user
+    # can actually change — the select whose empty value means "default".
+    |> unique_constraint(:service_id,
+      name: :alert_rules_one_default_per_organization,
+      message: "this organization already has a default rule"
+    )
     |> foreign_key_constraint(:organization_id)
     |> foreign_key_constraint(:service_id)
+  end
+
+  # A rule bound to a service must be bound to one of this organization's own.
+  # The foreign key alone only says the service exists somewhere, so without
+  # this an admin could point a rule at another tenant's service_id. That reads
+  # nothing — `rule_for_monitoring/1` filters by organization — but it takes the
+  # victim's slot in the unique index and stops them ever creating their own
+  # rule for that service. Cross-tenant denial of service through an unvalidated
+  # field, which is why the check belongs here and not in the form.
+  defp validate_service_scope(changeset) do
+    service_id = get_field(changeset, :service_id)
+
+    cond do
+      is_nil(service_id) ->
+        changeset
+
+      service_in_organization?(service_id, get_field(changeset, :organization_id)) ->
+        changeset
+
+      true ->
+        add_error(changeset, :service_id, "must belong to the organization")
+    end
+  end
+
+  defp service_in_organization?(service_id, organization_id) do
+    Repo.exists?(
+      from s in Service,
+        where: s.id == ^service_id and s.organization_id == ^organization_id
+    )
   end
 end

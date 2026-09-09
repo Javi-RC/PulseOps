@@ -1,6 +1,7 @@
 defmodule PulseOps.Notifications.NotifierTest do
   use PulseOps.DataCase, async: true
 
+  import PulseOps.MonitoringFixtures
   import PulseOps.OrganizationsFixtures
 
   alias PulseOps.Notifications.Notifier
@@ -29,45 +30,28 @@ defmodule PulseOps.Notifications.NotifierTest do
       changeset =
         Notifier.changeset(%Notifier{}, %{name: "Pager", type: :webhook, url: "not-a-url"}, scope)
 
-      assert %{url: ["must be an http(s) URL"]} = errors_on(changeset)
+      assert %{url: ["must be a valid http or https URL"]} = errors_on(changeset)
     end
 
-    test "an email requires a valid recipient" do
-      scope = organization_scope_fixture()
-
-      changeset =
-        Notifier.changeset(%Notifier{}, %{name: "Pager", type: :email, recipient: "nope"}, scope)
-
-      assert %{recipient: ["must be a valid email address"]} = errors_on(changeset)
-    end
-
-    test "an email does not need a URL and a webhook does not need a recipient" do
+    test "an email does not require a URL and a webhook does not need assignments" do
       scope = organization_scope_fixture()
 
       assert %Ecto.Changeset{valid?: true} =
                Notifier.changeset(
                  %Notifier{},
-                 %{
-                   name: "Mail",
-                   type: :email,
-                   recipient: "oncall@example.com"
-                 },
+                 %{name: "Mail", type: :email},
                  scope
                )
 
       assert %Ecto.Changeset{valid?: true} =
                Notifier.changeset(
                  %Notifier{},
-                 %{
-                   name: "Hook",
-                   type: :webhook,
-                   url: "https://hooks.example.com/pulseops"
-                 },
+                 %{name: "Hook", type: :webhook, url: "https://hooks.example.com/pulseops"},
                  scope
                )
     end
 
-    test "defaults are enabled true and scoped to the organization" do
+    test "defaults are enabled true, org-wide, and scoped to the organization" do
       scope = organization_scope_fixture()
 
       changeset =
@@ -82,7 +66,67 @@ defmodule PulseOps.Notifications.NotifierTest do
         )
 
       assert Ecto.Changeset.get_field(changeset, :enabled) == true
+      assert Ecto.Changeset.get_field(changeset, :service_id) == nil
       assert changeset.changes.organization_id == scope.organization.id
+    end
+
+    test "an empty service selection reads as org-wide" do
+      scope = organization_scope_fixture()
+
+      changeset =
+        Notifier.changeset(
+          %Notifier{},
+          %{
+            name: "Hook",
+            type: :webhook,
+            url: "https://hooks.example.com/pulseops",
+            service_id: ""
+          },
+          scope
+        )
+
+      assert Ecto.Changeset.get_field(changeset, :service_id) == nil
+      assert changeset.valid?
+    end
+
+    test "accepts a service from the same organization" do
+      scope = organization_scope_fixture()
+      service = service_fixture(scope)
+
+      changeset =
+        Notifier.changeset(
+          %Notifier{},
+          %{
+            name: "Hook",
+            type: :webhook,
+            url: "https://hooks.example.com/pulseops",
+            service_id: service.id
+          },
+          scope
+        )
+
+      assert Ecto.Changeset.get_field(changeset, :service_id) == service.id
+      assert changeset.valid?
+    end
+
+    test "rejects a service from another organization" do
+      scope = organization_scope_fixture()
+      other_scope = organization_scope_fixture()
+      service = service_fixture(other_scope)
+
+      changeset =
+        Notifier.changeset(
+          %Notifier{},
+          %{
+            name: "Hook",
+            type: :webhook,
+            url: "https://hooks.example.com/pulseops",
+            service_id: service.id
+          },
+          scope
+        )
+
+      assert %{service_id: ["must belong to the organization"]} = errors_on(changeset)
     end
   end
 end

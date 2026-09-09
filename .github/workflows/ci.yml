@@ -85,7 +85,11 @@ jobs:
 
       - run: mix credo --strict
 
-      - run: mix test
+      # --cover rather than a bare `mix test`: the threshold in mix.exs fails the
+      # build if coverage drops, which is the only thing that makes the number
+      # worth measuring.
+      - name: Test with coverage
+        run: mix test --cover
 
       - name: Create the PLT directory
         run: mkdir -p priv/plts

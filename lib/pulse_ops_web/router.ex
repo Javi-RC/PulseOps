@@ -17,6 +17,19 @@ defmodule PulseOpsWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Deliberately not on :browser — no session, no CSRF, no layout. A scraper is
+  # not a browser, and the endpoint carries its own bearer token instead.
+  pipeline :metrics do
+    plug :accepts, ["text"]
+    plug PulseOpsWeb.Plugs.MetricsAuth
+  end
+
+  scope "/", PulseOpsWeb do
+    pipe_through :metrics
+
+    get "/metrics", MetricsController, :index
+  end
+
   scope "/", PulseOpsWeb do
     pipe_through :browser
 

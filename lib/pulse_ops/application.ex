@@ -27,6 +27,11 @@ defmodule PulseOps.Application do
         do: children ++ [PulseOpsWeb.Flaky],
         else: children
 
+    # A job queue that fails silently is how incident notifications stop
+    # arriving with nobody noticing. Oban emits the telemetry; this is what
+    # turns it into a log line.
+    _ = Oban.Telemetry.attach_default_logger(level: :info)
+
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: PulseOps.Supervisor]

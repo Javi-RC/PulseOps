@@ -73,18 +73,30 @@ defmodule PulseOps.Notifications.NotifyJobTest do
   end
 
   describe "email deliveries" do
-    test "sends a plain text incident email", %{scope: scope, incident: incident} do
+    test "sends one plain text incident email per assigned user", %{
+      scope: scope,
+      incident: incident
+    } do
+      user_a = assignee_id_fixture(scope)
+      user_b = assignee_id_fixture(scope)
       drain_swoosh_mailbox()
-      notifier = notifier_fixture(scope, %{type: :email, recipient: "oncall@example.com"})
+
+      notifier =
+        notifier_fixture(scope, %{type: :email, assignee_ids: [user_a, user_b]})
 
       assert {:ok, _metadata} = perform_job(NotifyJob, job_args(notifier, incident, "opened"))
 
-      assert_email_sent(fn email ->
-        assert email.to == [{"", "oncall@example.com"}]
-        assert email.subject == "[PulseOps] Incident opened: #{incident.title}"
-        assert email.text_body =~ "An incident opened"
-        assert email.text_body =~ incident.title
-      end)
+      user_a_email = PulseOps.Repo.get!(PulseOps.Accounts.User, user_a).email
+      user_b_email = PulseOps.Repo.get!(PulseOps.Accounts.User, user_b).email
+
+      for email_address <- [user_a_email, user_b_email] do
+        assert_email_sent(fn email ->
+          assert email.to == [{"", email_address}]
+          assert email.subject == "[PulseOps] Incident opened: #{incident.title}"
+          assert email.text_body =~ "An incident opened"
+          assert email.text_body =~ incident.title
+        end)
+      end
     end
   end
 
