@@ -135,4 +135,104 @@ defmodule PulseOpsWeb.DashboardLiveTest do
                live(conn, ~p"/orgs/#{outsider.organization.slug}")
     end
   end
+
+  describe "reload debounce" do
+    setup do
+      # The suite reloads on the next message so tests can render straight after
+      # a broadcast; this is the one place a real window is exercised.
+      Application.put_env(:pulse_ops, :dashboard_debounce_ms, 50)
+      on_exit(fn -> Application.put_env(:pulse_ops, :dashboard_debounce_ms, 0) end)
+      :ok
+    end
+
+    test "a burst of broadcasts costs one reload, not one per message", %{
+      conn: conn,
+      scope: scope
+    } do
+      service = service_fixture(scope, %{name: "Payments API"})
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
+
+      one =
+        count_queries(live.pid, fn ->
+          broadcast_changes(scope, service, 1)
+          settle(live)
+        end)
+
+      many =
+        count_queries(live.pid, fn ->
+          broadcast_changes(scope, service, 10)
+          settle(live)
+        end)
+
+      assert one > 0, "a reload has to query something for this comparison to mean anything"
+
+      assert many == one,
+             "ten status changes must not cost ten reloads of a four-query summary"
+    end
+
+    test "the page still catches up with the final state", %{conn: conn, scope: scope} do
+      service = service_fixture(scope, %{name: "Payments API"})
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
+
+      Monitoring.update_service_status(service, :healthy)
+      Monitoring.update_service_status(service, :down)
+      settle(live)
+
+      # Coalescing drops intermediate reloads, never the last one: the summary is
+      # re-read from the database rather than patched from a message payload.
+      assert render(live) =~ "Down"
+    end
+  end
+
+  # Counts the repo queries issued by the LiveView itself. The handler runs in
+  # whichever process ran the query, so filtering on the pid keeps a concurrent
+  # test's queries out of the count.
+  defp count_queries(live_pid, fun) do
+    test_pid = self()
+    ref = make_ref()
+    handler_id = {:dashboard_query_counter, ref}
+
+    :telemetry.attach(
+      handler_id,
+      [:pulse_ops, :repo, :query],
+      fn _event, _measurements, _metadata, _config ->
+        if self() == live_pid, do: send(test_pid, {ref, :query})
+      end,
+      nil
+    )
+
+    try do
+      fun.()
+    after
+      :telemetry.detach(handler_id)
+    end
+
+    drain(ref, 0)
+  end
+
+  defp drain(ref, count) do
+    receive do
+      {^ref, :query} -> drain(ref, count + 1)
+    after
+      0 -> count
+    end
+  end
+
+  defp broadcast_changes(scope, service, times) do
+    for _ <- 1..times do
+      Phoenix.PubSub.broadcast(
+        PulseOps.PubSub,
+        "organization:#{scope.organization.id}:services",
+        {:updated, service}
+      )
+    end
+  end
+
+  # Waits out the debounce window and then synchronises with the LiveView, so
+  # the deferred reload is guaranteed to have been handled. Sleeping is what
+  # waiting on a wall-clock timer looks like; there is no message to await.
+  defp settle(live) do
+    Process.sleep(150)
+    render(live)
+  end
 end

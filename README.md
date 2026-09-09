@@ -6,7 +6,9 @@ Elixir, Phoenix LiveView and OTP.
 PulseOps watches each registered service from its own supervised process, decides
 when a service is genuinely down rather than briefly flaky, opens and resolves
 incidents on its own, and pushes every state change to connected dashboards over
-WebSockets. Nothing polls.
+WebSockets. Nothing polls — the dashboard coalesces a burst of changes into one
+refresh a quarter of a second later, so a flapping service costs one reload
+rather than one per change.
 
 ## What it does
 

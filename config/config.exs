@@ -96,6 +96,12 @@ config :pulse_ops, :retention, checks_retention_days: 30
 # back to :down is never suppressed — only the reconciliation path is.
 config :pulse_ops, :incident_reopen_grace_seconds, 300
 
+# How long the dashboard waits before re-reading its summary after a broadcast.
+# Every message that lands inside the window is absorbed by the reload already
+# pending, so a flapping service costs one reload rather than one per change.
+# The cost is up to this much latency on a status appearing.
+config :pulse_ops, :dashboard_debounce_ms, 250
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

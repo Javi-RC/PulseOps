@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
-| Next | F4 — dashboard debounce (the cheap half) |
-| Checks | `mix check` green: 408 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | F5 — SSRF mitigation (`UrlGuard`) |
+| Checks | `mix check` green: 410 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -360,6 +360,27 @@ standing, and a real recover-then-break-again cycle not being suppressed.
   `organization_id` is put from the scope so it has something to compare against.
   The check is in the changeset rather than the form, so it holds for any caller.
 
+### Stabilisation — F4: the dashboard coalesces reloads (the cheap half)
+
+- `load_dashboard/1` ran in full on every broadcast: four queries, one of them
+  aggregating 24 h of raw `service_checks`. Cost was
+  O(viewers × status changes × checks in 24 h), with no debounce and no cache —
+  the real scaling ceiling today, well ahead of the number of monitors.
+- A broadcast now schedules a deferred `:reload` and sets `reload_pending?`;
+  anything arriving while one is pending is absorbed by it. A burst of ten
+  messages costs one reload instead of ten.
+- `:dashboard_debounce_ms` is 250 in production. In the suite it is **0**, which
+  sends `:reload` straight to the mailbox rather than through a zero timer, so a
+  test can render immediately after a broadcast without racing.
+- The debounce is trailing-edge, so a status change takes up to 250 ms longer to
+  appear. The README's "nothing polls" claim now says so.
+- **Only the cheap half of F4.** The queries themselves still aggregate raw
+  checks; the rollups are Phase 2.
+- The coalescing test counts the repo queries issued *by the LiveView process* —
+  the telemetry handler runs in whichever process ran the query, so filtering on
+  the pid keeps a concurrently running test's queries out of the count — and
+  asserts a ten-message burst costs exactly what a single message costs.
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -372,8 +393,8 @@ next work is stabilisation rather than new features:
    unique index, see the F2 section above.
 3. ~~`AlertRule` does not validate that `service_id` belongs to the tenant~~ —
    fixed, see the F3 section above.
-4. The dashboard reloads four queries on every broadcast, one of them
-   aggregating 24 h of raw checks.
+4. ~~The dashboard reloads four queries on every broadcast~~ — debounced, see
+   the F4 section above. The queries themselves are still Phase 2 work.
 5. Service and webhook URLs allow SSRF into the internal network.
 
 Metric rollups (the original V2 item) are Phase 2 there, together with

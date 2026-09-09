@@ -64,4 +64,9 @@ config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual
 # behaviour itself is covered by a test that sets its own window.
 config :pulse_ops, :incident_reopen_grace_seconds, 0
 
+# The dashboard reloads on the next message instead of after a timer, so tests
+# can render immediately after a broadcast. The coalescing itself is covered by
+# a test that sets its own window.
+config :pulse_ops, :dashboard_debounce_ms, 0
+
 config :pulse_ops, webhook_client: :stub
