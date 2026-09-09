@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/incident-notifications` |
-| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) complete — scale and visibility |
+| Branch | `main` |
+| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) complete — scale and visibility (v0.4.0) |
 | Next | Phase 3 of [`ROADMAP.md`](ROADMAP.md) — product surface |
-| Checks | `mix check` green: 470 tests, 91.30% coverage, Credo `--strict` and Dialyzer clean |
+| Checks | `mix check` green: 470 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
