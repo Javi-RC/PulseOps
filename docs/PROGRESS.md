@@ -459,6 +459,23 @@ about the flaky endpoint. The script now asserts a healthy probe first.
   ignored but still sitting in the working tree.
 
 
+### Stabilisation — ARCHITECTURE.md brought back in line
+
+`ARCHITECTURE.md` still described the system as it was before Phase 1, which is
+the failure mode ADR-006 exists to prevent — it is the "shape of the system"
+document, so a stale one is worse than none. Corrected:
+
+- The check-cycle diagram now shows reconciliation on the *unchanged* branch,
+  which is where F1 actually hooks in.
+- `service_checks` no longer says "pruning is V2 work" (it shipped in Phase 9),
+  and now lists both indexes and the batched delete. Rollups stay Phase 2.
+- `alert_rules` documents the two unique indexes and why one does not cover the
+  other, plus the tenancy validation on `service_id`.
+- `incidents` documents the reopen grace and that a reopened outage is a new row.
+- A new **Outbound requests** section covers `UrlGuard` and why it runs twice.
+- The PubSub section says the dashboard coalesces its re-reads.
+
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
