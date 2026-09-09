@@ -31,12 +31,19 @@ defmodule PulseOpsWeb.DashboardLive do
      |> assign(:now, DateTime.utc_now())
      |> schedule_tick()
      |> assign(:can_manage?, Organizations.can?(scope, :manage_services))
+     |> assign(:reload_pending?, false)
      |> load_dashboard()}
   end
 
   # Any change on either topic re-reads the summary. The alternative — patching
   # the assigns from the message payload — would drift out of step with the
   # database the first time two changes raced.
+  #
+  # The re-read is deferred rather than immediate, because a broadcast arrives
+  # per status change per viewer and the summary costs four queries, one of them
+  # aggregating a day of raw checks. A flapping service with several dashboards
+  # open multiplies that out; coalescing a burst into one reload cuts it back to
+  # one regardless of how many messages arrived.
   @impl true
   def handle_info({event, _payload}, socket)
       when event in [
@@ -47,7 +54,11 @@ defmodule PulseOpsWeb.DashboardLive do
              :incident_updated,
              :incident_resolved
            ] do
-    {:noreply, load_dashboard(socket)}
+    {:noreply, schedule_reload(socket)}
+  end
+
+  def handle_info(:reload, socket) do
+    {:noreply, socket |> assign(:reload_pending?, false) |> load_dashboard()}
   end
 
   def handle_info(:tick, socket) do
@@ -55,6 +66,26 @@ defmodule PulseOpsWeb.DashboardLive do
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # Every broadcast that arrives while a reload is already queued is absorbed by
+  # the one already pending, so a burst of N messages costs one reload.
+  defp schedule_reload(%{assigns: %{reload_pending?: true}} = socket), do: socket
+
+  defp schedule_reload(socket) do
+    case debounce_ms() do
+      # No window: re-read inside this callback. Deferring by a message instead
+      # would land behind a render call already sitting in the mailbox, which is
+      # a race for anything observing the page right after a broadcast.
+      ms when ms <= 0 ->
+        load_dashboard(socket)
+
+      ms ->
+        Process.send_after(self(), :reload, ms)
+        assign(socket, :reload_pending?, true)
+    end
+  end
+
+  defp debounce_ms, do: Application.get_env(:pulse_ops, :dashboard_debounce_ms, 250)
   # The only timer on these pages, and it touches nothing but the clock: without
   # it a "3 min ago" label sits frozen until the next broadcast happens to
   # arrive. It issues no queries, so it is not polling.

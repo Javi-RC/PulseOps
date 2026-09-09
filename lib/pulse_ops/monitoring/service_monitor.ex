@@ -23,10 +23,10 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
   alias PulseOps.Incidents
   alias PulseOps.Monitoring
-  alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.HealthCheck
   alias PulseOps.Monitoring.HealthCheck.Result
   alias PulseOps.Monitoring.Service
+  alias PulseOps.Monitoring.StatusMachine
 
   # Monitors that all started together would otherwise probe in lockstep for ever
   # and hammer shared infrastructure in bursts.
@@ -42,9 +42,9 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     :timeout_ref,
     :timer_ref,
     :rule,
-    status: :unknown,
-    consecutive_failures: 0,
-    consecutive_successes: 0
+    :machine,
+    last_check_status: nil,
+    last_error: nil
   ]
 
   ## Client
@@ -88,13 +88,31 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
   """
   def check_now(service_id), do: GenServer.cast(via(service_id), :check)
 
+  @doc """
+  Tells a monitor its alert rule may have changed, so it re-reads it.
+
+  A monitor used to be restarted for this, which meant stopping a process,
+  waiting for the registry to release its name and booting a replacement — per
+  affected service, in sequence, from whichever process saved the rule. An
+  organization-wide rule made that O(number of services) of blocking work.
+
+  A cast reaches every affected monitor without any of them waiting on each
+  other, and each re-reads its own rule in its own process.
+  """
+  def rule_changed(service_id) do
+    case whereis(service_id) do
+      nil -> :ok
+      _pid -> GenServer.cast(via(service_id), :rule_changed)
+    end
+  end
+
   ## Server
 
   @impl true
   def init(%Service{} = service) do
     state = %__MODULE__{
       service: service,
-      status: service.status,
+      machine: StatusMachine.new(service.status),
       rule: Monitoring.rule_for_monitoring(service)
     }
 
@@ -105,23 +123,14 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
   # Incidents are opened on a status *transition*, so a restart while a service
   # is already down would otherwise leave it with no incident at all: the monitor
-  # starts in :down, never transitions, and nothing fires. Reconciling once at
-  # startup keeps the invariant "a down service has an open incident" true across
-  # restarts and crashes.
+  # starts in :down, never transitions, and nothing fires. Reconciling at startup
+  # keeps the invariant "a down service has an open incident" true across
+  # restarts and crashes; reconciling again after every probe keeps it true while
+  # the monitor runs, which boot-only reconciliation did not (ADR-009).
   @impl true
   def handle_continue(:reconcile_incident, state) do
     state = %{state | rule: Monitoring.rule_for_monitoring(state.service)}
-
-    case state.status do
-      :down ->
-        Incidents.open_incident(state.service, state.rule, nil)
-
-      status when status in [:healthy, :degraded] ->
-        Incidents.resolve_open_incident(state.service)
-
-      :unknown ->
-        :ok
-    end
+    Incidents.reconcile_incident(state.service, state.machine.status, state.rule)
 
     {:noreply, state}
   end
@@ -130,15 +139,36 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
   def handle_call(:status, _from, state) do
     {:reply,
      %{
-       status: state.status,
-       consecutive_failures: state.consecutive_failures,
-       consecutive_successes: state.consecutive_successes,
-       checking?: state.task != nil
+       status: state.machine.status,
+       consecutive_failures: state.machine.consecutive_failures,
+       consecutive_successes: state.machine.consecutive_successes,
+       checking?: state.task != nil,
+       # Which rule the monitor is actually running on, which is the only way to
+       # observe that a rule change reached it.
+       failure_threshold: state.rule.failure_threshold,
+       success_threshold: state.rule.success_threshold
      }, state}
   end
 
   @impl true
   def handle_cast(:check, state), do: {:noreply, start_check(state)}
+
+  # Re-read the rule and judge what we have already seen against it, rather than
+  # waiting for the next probe. A restart used to discard the failure and
+  # success tallies and start counting again from zero, so a threshold lowered
+  # to 1 still needed a fresh probe to bite. Applying it to the counts already
+  # taken makes the change take effect immediately and keeps the information.
+  def handle_cast(:rule_changed, state) do
+    rule = Monitoring.rule_for_monitoring(state.service)
+    machine = StatusMachine.reapply(state.machine, state.last_check_status, rule)
+    state = %{state | rule: rule}
+
+    if machine.status == state.machine.status do
+      {:noreply, %{state | machine: machine}}
+    else
+      {:noreply, transition(state, machine, state.last_error)}
+    end
+  end
 
   @impl true
   def handle_info(:check, state), do: {:noreply, start_check(state)}
@@ -230,9 +260,16 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
         {:error, %Result{} = result} -> {result, false}
       end
 
-    check_status = check_status(result, healthy?, state.service, state.rule)
-    state = tally(state, healthy?)
-    next_status = next_status(state, check_status, state.rule)
+    check_status =
+      StatusMachine.classify(
+        healthy?,
+        result.response_time_ms,
+        state.service.timeout_ms,
+        state.rule
+      )
+
+    machine = StatusMachine.advance(state.machine, check_status, state.rule)
+    state = %{state | last_check_status: check_status, last_error: result.error}
 
     :telemetry.execute(
       [:pulse_ops, :monitoring, :check],
@@ -242,10 +279,15 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
     case Monitoring.record_check(state.service, check_status, result) do
       {:ok, _check} ->
-        if next_status == state.status do
-          {:ok, state}
+        if machine.status == state.machine.status do
+          # No transition to hang the incident hook on, so this is the only
+          # chance to notice that the incident state no longer matches reality —
+          # most importantly a service still down whose incident somebody
+          # resolved by hand (ADR-009).
+          Incidents.reconcile_incident(state.service, machine.status, state.rule)
+          {:ok, %{state | machine: machine}}
         else
-          {:ok, transition(state, next_status, result)}
+          {:ok, transition(state, machine, result.error)}
         end
 
       # No point recording a status for a service that no longer exists: tell the
@@ -255,58 +297,27 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     end
   end
 
-  defp check_status(_result, false, _service, _rule), do: :down
+  defp transition(state, %StatusMachine{status: next_status} = machine, reason) do
+    previous = state.machine.status
 
-  defp check_status(
-         %Result{response_time_ms: elapsed},
-         true,
-         %Service{timeout_ms: timeout},
-         %AlertRule{degraded_ratio: ratio}
-       )
-       when is_integer(elapsed) and elapsed >= timeout * ratio,
-       do: :degraded
-
-  defp check_status(_result, true, _service, _rule), do: :healthy
-
-  defp tally(state, true) do
-    %{state | consecutive_successes: state.consecutive_successes + 1, consecutive_failures: 0}
-  end
-
-  defp tally(state, false) do
-    %{state | consecutive_failures: state.consecutive_failures + 1, consecutive_successes: 0}
-  end
-
-  # Down needs sustained failure; recovery needs sustained success. A degraded
-  # reading is reported straight away, since it is not a failure to confirm.
-  # Both thresholds come from the service's alert rule.
-  defp next_status(state, :down, %AlertRule{failure_threshold: threshold})
-       when state.consecutive_failures >= threshold,
-       do: :down
-
-  defp next_status(state, :down, _rule), do: state.status
-
-  defp next_status(state, healthy_or_degraded, %AlertRule{success_threshold: threshold}) do
-    if state.status == :down and state.consecutive_successes < threshold do
-      state.status
-    else
-      healthy_or_degraded
-    end
-  end
-
-  defp transition(state, next_status, result) do
-    Logger.info("service #{state.service.id} #{state.status} -> #{next_status}")
+    Logger.info("service status changed",
+      service_id: state.service.id,
+      organization_id: state.service.organization_id,
+      service_status_from: previous,
+      service_status_to: next_status
+    )
 
     service = Monitoring.update_service_status(state.service, next_status)
 
     # Every status change passes through here, which makes it the one place the
     # incident lifecycle has to hook into.
-    case {state.status, next_status} do
-      {_previous, :down} -> Incidents.open_incident(service, state.rule, result.error)
+    case {previous, next_status} do
+      {_previous, :down} -> Incidents.open_incident(service, state.rule, reason)
       {:down, _recovered} -> Incidents.resolve_open_incident(service)
       {_previous, _next} -> :ok
     end
 
-    %{state | service: service, status: next_status}
+    %{state | service: service, machine: machine}
   end
 
   ## Scheduling

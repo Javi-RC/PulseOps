@@ -8,6 +8,7 @@ defmodule PulseOps.Monitoring.Service do
 
   import Ecto.Changeset
 
+  alias PulseOps.Monitoring.UrlGuard
   alias PulseOps.Organizations.Organization
 
   @environments [:production, :staging, :development]
@@ -92,15 +93,15 @@ defmodule PulseOps.Monitoring.Service do
     |> validate_required([:status])
   end
 
+  # UrlGuard covers the scheme check and, unless private targets are allowed,
+  # rejects anything resolving into the network PulseOps runs in. The same guard
+  # runs again just before each probe, because a name can be repointed between
+  # saving and fetching.
   defp validate_url(changeset, field) do
     validate_change(changeset, field, fn ^field, value ->
-      case URI.parse(value) do
-        %URI{scheme: scheme, host: host}
-        when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-          []
-
-        _otherwise ->
-          [{field, "must be a valid http or https URL"}]
+      case UrlGuard.validate(value) do
+        :ok -> []
+        {:error, reason} -> [{field, UrlGuard.message(reason)}]
       end
     end)
   end

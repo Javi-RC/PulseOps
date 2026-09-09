@@ -62,11 +62,19 @@ config :phoenix_live_view,
 #
 # For production it's recommended to configure a different adapter
 # at the `config/runtime.exs`.
-config :pulse_ops, PulseOps.Mailer, adapter: Swoosh.Adapters.Local
+config :pulse_ops, PulseOps.Mailer,
+  adapter: Swoosh.Adapters.Local,
+  from: "contact@example.com",
+  from_name: "PulseOps"
 
-# Configure Oban, the job queue. Only housekeeping jobs run today — check
-# retention and expired token purge — alert rules and notifications will follow.
-# Tests disable the queues and drive jobs through `Oban.Testing`.
+config :pulse_ops, PulseOps.Notifications.Mailer,
+  adapter: Swoosh.Adapters.Local,
+  from: "contact@example.com",
+  from_name: "PulseOps"
+
+# Configure Oban, the job queue. Housekeeping jobs (check retention, expired
+# token purge) and notification deliveries run on the default queue. Tests
+# disable the queues and drive jobs through `Oban.Testing`.
 config :pulse_ops, Oban,
   repo: PulseOps.Repo,
   queues: [default: 10],
@@ -74,13 +82,35 @@ config :pulse_ops, Oban,
     {Oban.Plugins.Cron,
      crontab: [
        {"@daily", PulseOps.Monitoring.RetentionJob},
-       {"@daily", PulseOps.Accounts.PurgeExpiredTokensJob}
+       {"@daily", PulseOps.Accounts.PurgeExpiredTokensJob},
+       # A few minutes past the hour, so the hour it rolls up is finished and
+       # no checks are still landing in it.
+       {"5 * * * *", PulseOps.Monitoring.RollupJob}
      ]}
   ]
 
 # Data retention. `checks_retention_days` is the window for raw `service_checks`
 # rows — anything older is deleted nightly by `PulseOps.Monitoring.RetentionJob`.
 config :pulse_ops, :retention, checks_retention_days: 30
+
+# How long a manual resolution suppresses reconciliation. Closing an incident by
+# hand on a service that has not recovered means "snooze this outage", so the
+# monitor waits this long before reopening it (see ADR-009). A real transition
+# back to :down is never suppressed — only the reconciliation path is.
+config :pulse_ops, :incident_reopen_grace_seconds, 300
+
+# How long the dashboard waits before re-reading its summary after a broadcast.
+# Every message that lands inside the window is absorbed by the reload already
+# pending, so a flapping service costs one reload rather than one per change.
+# The cost is up to this much latency on a status appearing.
+config :pulse_ops, :dashboard_debounce_ms, 250
+
+# Whether tenants may point a service or a webhook at a private, loopback or
+# link-local address. False here so production is safe by default; development
+# and test turn it on, because localhost is what they watch. See
+# `PulseOps.Monitoring.UrlGuard` — an installation that legitimately monitors a
+# private network sets this to true.
+config :pulse_ops, :allow_private_targets, false
 
 # Configure esbuild (the version is required)
 config :esbuild,
@@ -105,9 +135,18 @@ config :tailwind,
   ]
 
 # Configure Elixir's Logger
+# The domain identifiers are logged as metadata rather than interpolated into
+# the message, so a log aggregator can filter on them instead of parsing prose.
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [
+    :request_id,
+    :service_id,
+    :organization_id,
+    :service_status_from,
+    :service_status_to,
+    :incident_id
+  ]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

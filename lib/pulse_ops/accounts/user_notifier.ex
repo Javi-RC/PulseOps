@@ -14,7 +14,7 @@ defmodule PulseOps.Accounts.UserNotifier do
     email =
       new()
       |> to(recipient)
-      |> from({"PulseOps", "contact@example.com"})
+      |> from(Mailer.from_default())
       |> subject(subject)
       |> text_body(body)
 

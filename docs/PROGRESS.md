@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | 10 complete — alert rules UI and propagation (v0.3.0) |
-| Next | V2 — notifications, activity log, metric rollups |
-| Checks | `mix check` green: 366 tests, Credo `--strict` clean, Dialyzer clean |
+| Branch | `feature/incident-notifications` |
+| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) complete — scale and visibility |
+| Next | Phase 3 of [`ROADMAP.md`](ROADMAP.md) — product surface |
+| Checks | `mix check` green: 470 tests, 91.30% coverage, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -244,18 +244,393 @@ next probe opens an incident at the new severity; editing thresholds takes effec
 on the restarted monitor; the organization default restarts every monitor; and
 deleting a rule puts the monitor back on the built-in default.
 
-## Next steps — V2
+### Phase 11 — Incident notifications (webhook + email)
 
-In rough order of what adds most:
+- A `Notifier` is a delivery channel an organization configures: a generic webhook
+  URL (`:webhook`) or an email (`:email`). Both can be paused with `enabled` —
+  kept but no longer addressed. The `notifiers` table is organization-scoped and
+  optionally narrowed to a single `service_id` (nil = fires for any incident in
+  the organization). Email notifiers reach each user assigned via the
+  `notifier_assignments` join table (one copy per person); webhooks record the
+  responsible people through the same assignments.
+- **Webhooks** get a POST of flat JSON (event, incident, service, organization) so
+  Discord, Teams, Mattermost, ntfy, Gotify, Make, n8n or a script can consume it
+  with no PulseOps schema knowledge. An optional `secret_token` is sent as a
+  `Bearer` header. A non-2xx response or a transport error is returned so the job
+  retries.
+- **Email** is plain text on purpose (pager/phone friendly), delivered via Swoosh.
+  The sender defaults are in app config; `runtime.exs` and `prod.exs` read
+  `MAILER_FROM`/`MAILER_FROM_NAME` and, when `BREVO_API_KEY` is set, switch the
+  adapter to Swoosh's Brevo one with Req as the API client.
+- **Delivery is queued, never inline.** `enqueue_incident_notifications/3` — called
+  from `PulseOps.Incidents` after an incident opens or resolves — queues one
+  `NotifyJob` per matching enabled notifier (matching = enabled, same
+  organization, and service-wide or narrowed to the incident's service). Each
+  notifier gets its own job and retry
+  budget (`max_attempts: 5`), so a slow or down receiver never blocks the monitor.
+- `NotifyJob` is deliberately quiet when a notifier or incident is gone by the
+  time it runs (deleted, or paused): no error is logged for a channel that no
+  longer exists.
+- `NotifierLive.Index` lists channels with service scope, Active/Paused pills and
+  delete; `NotifierLive.Form` switches a scope dropdown (every service / one) and
+  an assigned-members multi-select by type. Manage controls
+  are gated behind `:manage_organization`, like alert rules. Both are reached from
+  a "Notifications" card on the organization settings page.
+- In tests, webhook deliveries go through Req's test plug adapter
+  (`config :pulse_ops, webhook_client: :stub`) so nothing touches the network.
 
-1. **Notifications**: Slack and generic webhooks first, email second.
-2. **Metric rollups** so uptime and percentiles stop scanning raw checks, plus a
-   retention policy.
-3. **Activity log** for auditability.
+**Verified by tests:** payload shape and bearer header, retry on HTTP 500,
+no-op on deleted/paused notifier or deleted incident, email subject/body/to and
+per-assignee delivery, enqueue-once per matching notifier for both open and
+resolve, service narrowing (a notifier for another service does not fire), and
+cross-organization service rejection.
 
-Then V3: clustering with leader election so several nodes do not duplicate checks,
-Prometheus/OpenTelemetry export, and load and chaos testing. The partial unique
-index (ADR-004) is already what makes the clustering step safe.
+### Stabilisation — F1: continuous incident reconciliation
+
+First of the five P0 defects from [`ROADMAP.md`](ROADMAP.md).
+
+- **The bug, confirmed by a failing test before anything was changed.** Incidents
+  open on a status *transition*, and a service already at `:down` never
+  transitions again. So resolving an incident by hand while the service was still
+  broken left the outage running with no incident and no further notifications,
+  and it did not heal until the monitor restarted — in production, a redeploy.
+  ADR-008's reconciliation ran only in `handle_continue/2` at boot.
+- `Incidents.reconcile_incident/3` is the new monitor-facing entry point: it reads
+  the current incident state and acts only where it diverges from the status just
+  observed. `ServiceMonitor` calls it after every probe that produced no
+  transition, and `handle_continue(:reconcile_incident)` now delegates to it
+  instead of open-coding the same cases.
+- **A manual resolve is a snooze, not a fix.** Reopening is suppressed for
+  `:incident_reopen_grace_seconds` after a person resolves an incident on a
+  service that has not recovered — `resolved_by_id` is what tells a human's
+  resolution from the monitor's. 300 s in production, 0 in the suite so probes
+  stay deterministic.
+- **The grace period applies to reconciliation only.** A genuine transition back
+  to `:down` always opens an incident. A flat window would have swallowed a real
+  new outage that started inside it.
+- Reopening inserts a **new** incident whose first timeline event is typed
+  `:reopened`, so the timeline does not claim the monitor detected something it
+  had already reported. The resolved row and the person who closed it are left
+  intact. `incident_events.type` is a string column, so no migration was needed.
+- See **ADR-009**, which extends ADR-008 from "reconcile at boot" to "reconcile
+  continuously" and records why a reconciling *read* is not the failing *insert*
+  ADR-008 rejected.
+
+**Verified by tests:** the anchor regression (down → resolved by hand → next
+failing probe opens a new incident) plus the timeline event, suppression inside
+the grace window, a recovery during the window leaving the manual resolution
+standing, and a real recover-then-break-again cycle not being suppressed.
+
+**Verified against the running app**, which is this project's standard and the
+scenario that fails silently without the fix. `priv/scenarios/f1_reconciliation.exs`
+drives it end to end with real monitors, real HTTP probes against `/dev/flaky`
+and real timers, nothing mocked:
+
+```
+docker compose run --rm -e PHX_SERVER=true web mix run priv/scenarios/f1_reconciliation.exs
+```
+
+It breaks the endpoint, waits for the incident, resolves it by hand while the
+service is still broken, confirms nothing reopens inside the grace period,
+confirms a **new** incident with a `:reopened` event opens once the grace is
+lifted, then heals the endpoint and confirms the monitor closes it on its own.
+
+**`PHX_SERVER=true` is not optional.** Under plain `mix run` the endpoint starts
+but never listens, so every probe gets "connection refused" — which still drives
+a service down and would look like a passing scenario while proving nothing
+about the flaky endpoint. The script now asserts a healthy probe first.
+
+
+### Stabilisation — F2: one default alert rule per organization
+
+- `unique_index(:alert_rules, [:service_id])` never said what it looked like it
+  said. Postgres treats NULLs as distinct from each other, so any number of rows
+  with a null `service_id` — the organization default — were legal. The only
+  thing preventing a second default was the form hiding the option once one
+  existed: check-then-act, no transaction, and bypassable with a crafted submit.
+- With duplicates present, `rule_for_monitoring/1` and `get_rule_for_service/2`
+  ordered by `is_nil(service_id)` with `limit: 1` and **no tiebreaker**, so which
+  rule governed a service was whatever the planner returned.
+- Migration `add_default_alert_rule_unique_index` adds
+  `alert_rules_one_default_per_organization`, unique on `organization_id` where
+  `service_id IS NULL`. Its `up` deletes pre-existing duplicates first, keeping
+  the lowest id — the index cannot be created while they exist, and a
+  development database may well carry some.
+- Both lookups gained `asc: r.id` as a tiebreaker, so resolution is deterministic
+  regardless of what the data looks like.
+- `AlertRule.changeset/3` declares the constraint, reported against `:service_id`
+  because that is the field the user can change. The form guard stays as a
+  convenience; it is no longer the guarantee.
+- **A test asserted the bug as intended behaviour** ("two org defaults are
+  allowed"). It is now inverted, plus one confirming a second organization is
+  still free to have its own default.
+
+### Stabilisation — F3: alert rules cannot point at another tenant's service
+
+- `AlertRule.changeset/3` cast `:service_id` with only a `foreign_key_constraint`,
+  which says the service exists *somewhere* — not that it belongs to the
+  organization creating the rule. `Notifier.changeset/3` already validated this;
+  the alert rule did not.
+- The impact was not reading another tenant's data — `rule_for_monitoring/1`
+  filters by `organization_id` — but **taking the victim's slot in the unique
+  index**, so they could never create their own rule for their own service. A
+  cross-tenant denial of service through an unvalidated field.
+- `validate_service_scope/1` added, mirroring the notifier's, and running after
+  `organization_id` is put from the scope so it has something to compare against.
+  The check is in the changeset rather than the form, so it holds for any caller.
+
+### Stabilisation — F4: the dashboard coalesces reloads (the cheap half)
+
+- `load_dashboard/1` ran in full on every broadcast: four queries, one of them
+  aggregating 24 h of raw `service_checks`. Cost was
+  O(viewers × status changes × checks in 24 h), with no debounce and no cache —
+  the real scaling ceiling today, well ahead of the number of monitors.
+- A broadcast now schedules a deferred `:reload` and sets `reload_pending?`;
+  anything arriving while one is pending is absorbed by it. A burst of ten
+  messages costs one reload instead of ten.
+- `:dashboard_debounce_ms` is 250 in production. In the suite it is **0**, and a
+  window of zero re-reads inside the broadcast callback rather than deferring at
+  all — see the trap about `send(self(), ...)` landing behind a queued call.
+- The debounce is trailing-edge, so a status change takes up to 250 ms longer to
+  appear. The README's "nothing polls" claim now says so.
+- **Only the cheap half of F4.** The queries themselves still aggregate raw
+  checks; the rollups are Phase 2.
+- The coalescing test counts the repo queries issued *by the LiveView process* —
+  the telemetry handler runs in whichever process ran the query, so filtering on
+  the pid keeps a concurrently running test's queries out of the count — and
+  asserts a ten-message burst costs exactly what a single message costs.
+
+### Stabilisation — F5: SSRF guard on tenant-supplied URLs
+
+- Both the health checks and the outgoing webhooks fetch a URL somebody typed
+  into a form, from inside the network PulseOps runs in. Neither
+  `Service.changeset/3` nor `Notifier.changeset/3` did more than an http(s)
+  format check, so any tenant could register
+  `http://169.254.169.254/latest/meta-data/` or `http://localhost:5432` as a
+  "service" and have the dashboard report back its HTTP status and response
+  time, on a schedule.
+- `PulseOps.Monitoring.UrlGuard` is a pure module: it checks the scheme,
+  resolves the host, and rejects loopback, RFC 1918, link-local, CGNAT,
+  benchmark, multicast and reserved IPv4, plus unspecified, loopback,
+  unique-local and link-local IPv6. **Both IPv4-in-IPv6 forms are unwrapped and
+  judged as IPv4**, or `::ffff:127.0.0.1` walks straight past.
+- A host resolving to nothing is rejected rather than allowed, so the guard
+  cannot fail open. Every address a name answers with must pass — one public
+  answer alongside a private one is still a way in.
+- **The guard runs twice.** The changeset is not enough: a name can be repointed
+  at a private address between saving and fetching (DNS rebinding), and the check
+  interval keeps that window open for as long as the service exists. So
+  `HealthCheck.Req.check/2` and `WebhookSender.deliver/3` check again immediately
+  before the request. A blocked probe is recorded as a failed check carrying the
+  reason, rather than silently not happening.
+- `:allow_private_targets` is **false in production, true in development and
+  test** — plenty of installations exist to watch a private network, and the
+  guard would break them. The scheme check applies either way.
+- Tested with the ranges spelled out, plus two StreamData properties over IPv4
+  host bits — the first use of StreamData, which was declared and unused.
+
+### Stabilisation — F6: retention deletes in batches, on an index
+
+- The only index on `service_checks` was `[:service_id, :inserted_at]`, which
+  serves every read — they are all "the latest checks for one service". The
+  nightly retention delete filters on `inserted_at` alone, and a composite index
+  cannot serve a predicate that does not constrain its leading column. So the
+  job was a **sequential scan over the largest table in the schema, every
+  night**, and one unbounded `DELETE` holding row locks for as long as it ran.
+- New index on `[:inserted_at]`, created `concurrently` with
+  `@disable_ddl_transaction` and `@disable_migration_lock`, because this
+  migration will one day run against a table with tens of millions of rows.
+- `prune_old_checks/2` takes `batch_size` (default 10,000) and deletes in
+  bounded batches until a short one says the backlog is exhausted. Postgres has
+  no `LIMIT` on `DELETE`, so the batch is picked by an id subquery, which keeps
+  the lookup on the new index.
+- How long the old statement ran depended on the retention window, which is
+  *configurable* — a config change could have put the nightly job on the table
+  for minutes. Batching makes each statement short whatever the backlog is.
+- The test asserts the batching itself by counting `DELETE` statements through
+  Ecto telemetry: 25 expired rows at `batch_size: 10` is three statements, not
+  one, and the fresh row survives.
+
+### Stabilisation — repo housekeeping
+
+- `mix.exs` said `0.2.0` while `v0.3.0` was tagged; it now agrees with the tag.
+- Deleted the stray empty `.github;W` directory — a shell redirection that
+  landed as a filename — and the 7 MB `erl_crash.dump`, which was already
+  ignored but still sitting in the working tree.
+
+
+### Stabilisation — ARCHITECTURE.md brought back in line
+
+`ARCHITECTURE.md` still described the system as it was before Phase 1, which is
+the failure mode ADR-006 exists to prevent — it is the "shape of the system"
+document, so a stale one is worse than none. Corrected:
+
+- The check-cycle diagram now shows reconciliation on the *unchanged* branch,
+  which is where F1 actually hooks in.
+- `service_checks` no longer says "pruning is V2 work" (it shipped in Phase 9),
+  and now lists both indexes and the batched delete. Rollups stay Phase 2.
+- `alert_rules` documents the two unique indexes and why one does not cover the
+  other, plus the tenancy validation on `service_id`.
+- `incidents` documents the reopen grace and that a reopened outage is a new row.
+- A new **Outbound requests** section covers `UrlGuard` and why it runs twice.
+- The PubSub section says the dashboard coalesces its re-reads.
+
+
+### Phase 2 — Metric rollups (the expensive half of F4)
+
+- `service_checks` grows at `86,400 / interval` rows per service per day, and
+  both `uptime_by_service/2` and `service_metrics/3` aggregated over those raw
+  rows. The cost of opening the dashboard therefore scaled with the **retention
+  window**, which is a config value — lengthening it to keep more history would
+  have quietly made every page slower.
+- `service_check_rollups`: one row per service per hour, built by
+  `RollupJob` on a `5 * * * *` cron so the hour it aggregates is finished.
+  `roll_up_hour/1` **recomputes and upserts**, so a retry, a backfill overlapping
+  a scheduled run, or the same hour rolled twice all converge instead of
+  double-counting.
+- Reads take complete hours from rollups and the current, still-filling hour from
+  raw checks, then add them. `since` is aligned down to the hour, so a "last 24
+  hours" figure covers from the top of that hour.
+- **Latency is a cumulative histogram, not three percentile columns.** Counts
+  merge across hours by addition; percentiles do not — the p95 of a day is not
+  the average of 24 hourly p95s and cannot be recovered from them. Hourly
+  percentile columns would have produced a plausible, unboundedly wrong number.
+  A histogram merges by addition and its error is bounded by the bucket width.
+  See **ADR-010**.
+- `backfill_service_check_rollups` populates history in one SQL statement at
+  migration time. Without it an existing installation would show an empty rollup
+  table and the dashboard's uptime would silently narrow to the current hour.
+
+**Verified against the development database**, not only by tests:
+`priv/scenarios/rollup_consistency.exs` compared the summed rollups with the raw
+aggregation over the same finished hours — **17,247 raw checks across 9 services
+reduced to 142 rollup rows, agreeing exactly** on totals, up counts, latency
+counts and histogram buckets.
+
+
+### Phase 2 — F8: the telemetry is consumed
+
+- `[:pulse_ops, :monitoring, :check]` had been emitted since Phase 3 and heard
+  by nobody. `PulseOpsWeb.Telemetry` defined the stock Phoenix metrics, which
+  only LiveDashboard read, and the reporter line was still commented out.
+- `telemetry_metrics_prometheus_core` keeps a Prometheus-shaped set in ETS,
+  separate from `metrics/0`: the two reporters want different shapes, and a
+  Prometheus histogram needs explicit buckets LiveDashboard has no use for.
+- Exported: probe counts and a response-time histogram by status, Oban job
+  outcomes and queue time by worker, request duration by route, query time, and
+  VM memory. **Nothing is labelled with a `service_id`** — cardinality would
+  grow with every tenant's every service, and per-service figures already live
+  in the database and on the dashboard. Prometheus watches PulseOps; the
+  database watches the services.
+- `/metrics` sits on its own pipeline — no session, no CSRF, no layout — behind
+  `MetricsAuth`. **No token configured means 404, not 401**, so an installation
+  that never set one does not advertise that it has metrics. The comparison is
+  `Plug.Crypto.secure_compare/2`; `==` leaks the token's prefix to anyone
+  willing to measure. `METRICS_TOKEN` at runtime, a fixed one in dev.
+- Status transitions and the incident lifecycle now log `service_id`,
+  `organization_id` and `incident_id` as **metadata rather than interpolated
+  prose**, so an aggregator can filter on them. `Oban.Telemetry.attach_default_logger`
+  turns a failing job into a log line instead of silence.
+
+**Verified against the running app** with
+`priv/scenarios/metrics_endpoint.exs`: 401 with no token, 401 with a wrong one,
+200 with the right one, and real series
+(`pulse_ops_monitoring_check_count{status="healthy"} 6`) with no `service_id`
+label anywhere in the output.
+
+
+### Phase 2 — F7: rule changes propagate without restarting anything
+
+- A rule change used to restart every affected monitor: stop the process, wait
+  for the registry to release its name, boot a replacement — **once per service,
+  in sequence, from the LiveView that saved the rule**. An organization-wide
+  rule made that O(number of services) of blocking work; the roadmap's estimate
+  was up to 50 seconds at 100 services.
+- `ServiceMonitor.rule_changed/1` casts instead. Each monitor re-reads its own
+  rule in its own process, so nothing waits on anything else and the caller
+  returns immediately.
+- **The cast does something a restart could not.** A restart discarded the
+  failure and success tallies, so a threshold lowered to 1 still needed a fresh
+  probe to bite. The monitor now applies the new thresholds to what it has
+  already counted, so the change takes effect at once and no information is
+  thrown away.
+- `MonitorSupervisor.stop_monitor/1` waits for `Process.monitor`'s `:DOWN`
+  instead of sleeping in 10 ms steps for up to half a second. The registry's
+  own cleanup still cannot be awaited — it drops its entry when *it* handles the
+  `:DOWN`, in its own process, with no message to subscribe to — so that part
+  keeps a bounded check, now yielding with `Process.sleep(0)` rather than idling.
+- `status/1` reports the thresholds the monitor is actually running on, which is
+  the only way to observe that a change reached it.
+- The four propagation tests asserted the *mechanism* (the pid changed). They
+  now assert the outcome — the new thresholds are in force — **and** that the
+  pid did not change. A cast from the test process is ordered ahead of a call
+  made from it afterwards, so they need no polling.
+
+
+### Phase 2 — the status state machine is pure, and property-tested
+
+- `next_status/3`, `tally/2` and the degraded check were private functions of
+  `ServiceMonitor`, entangled with its I/O. `PulseOps.Monitoring.StatusMachine`
+  now holds them: no processes, no database, no clock. The monitor keeps a
+  `%StatusMachine{}` in its state and asks it.
+- The behaviour worth testing there is **hysteresis** — down needs sustained
+  failure, recovery needs sustained success — and hysteresis bugs only appear
+  over *sequences*, which are expensive to explore through a GenServer and cheap
+  through a function. That is the whole reason for the split.
+- Five StreamData properties: entering `:down` always took `failure_threshold`
+  consecutive failures, leaving it always took `success_threshold` consecutive
+  successes, a short run of failures never moves the status, the two counters
+  are never both running, and the status is always a known one.
+- **The first version of the "two open incidents" property could not fail.** It
+  derived incident opens and closes from *status changes*, so they alternated by
+  construction whatever the machine did. It was replaced by the properties above,
+  which are what that invariant actually rests on; the database holds the
+  invariant itself (ADR-004). The replacements were **checked by mutation**:
+  weakening the threshold comparison to `>= threshold - 1` fails two of the five
+  properties and two example tests.
+- `ServiceMonitor.status/1` reports the thresholds in force, which is how a test
+  observes that a rule change reached a running monitor.
+
+
+### Phase 2 — coverage with a threshold in CI
+
+- `mix test --cover` now runs in CI and in `mix check`, with
+  `summary: [threshold: 90]` in `mix.exs`. Verified that it actually gates:
+  raising the threshold to 99 exits 3, and 90 exits 0.
+- The threshold is a **ratchet set just under what the suite achieves** (91.30%),
+  so it catches a drop rather than inviting tests written to move a number.
+- `ignore_modules` excludes test support — counting `DataCase` and the fixtures
+  flatters the figure, since they are exercised by definition — the dev-only
+  `/dev/flaky` demo modules, and generated shells with no logic of ours.
+- **Chasing the number found a real gap.** `HealthCheck.Req` was at 0%: every
+  test swaps the whole behaviour for a Mox mock, so the real client, *including
+  the SSRF guard F5 added to it*, was never executed. It now has the same
+  `Req.Test` seam the webhook sender has (`health_check_transport: :stub`) and
+  six tests covering the response mapping and the guard — including one asserting
+  a private target is refused **without any request being attempted**.
+
+
+## Next steps
+
+**See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
+found nine defects that are not recorded in this file, five of them P0, so the
+next work is stabilisation rather than new features:
+
+1. ~~A manually resolved incident never reopens while the service is still down~~
+   — fixed, see the F1 section above and ADR-009.
+2. ~~Several organization-default alert rules can exist~~ — fixed by a partial
+   unique index, see the F2 section above.
+3. ~~`AlertRule` does not validate that `service_id` belongs to the tenant~~ —
+   fixed, see the F3 section above.
+4. ~~The dashboard reloads four queries on every broadcast~~ — debounced, see
+   the F4 section above. The queries themselves are still Phase 2 work.
+5. ~~Service and webhook URLs allow SSRF into the internal network~~ — fixed
+   by `UrlGuard`, see the F5 section above.
+
+Metric rollups (the original V2 item) are Phase 2 there, together with
+observability and hot rule propagation. Activity log, clustering with leader
+election, and Prometheus/OpenTelemetry export remain later phases. The partial
+unique index (ADR-004) is already what makes the clustering step safe.
 
 ## Traps already hit
 
@@ -280,6 +655,16 @@ index (ADR-004) is already what makes the clustering step safe.
   Registry drops its entry only when it handles the `:DOWN`. `stop_monitor/1`
   therefore waits for the name to be released, or `restart_monitor/1` would fail
   with `{:already_started, <dead pid>}`.
+- **A property test can be structurally incapable of failing.** The first
+  "no two open incidents" property derived incident opens and closes from status
+  *changes*, so they alternated by construction no matter what the state machine
+  did. Mutating the implementation is the cheap way to find this out: if
+  weakening the code does not fail the property, the property was decoration.
+- **Application env is global, so a test that flips it cannot be `async: true`.**
+  `UrlGuardTest` toggles `:allow_private_targets` and, while async, failed
+  unrelated modules whose fixtures were saving a service URL at that moment. The
+  same applies to any test setting `:incident_reopen_grace_seconds` or
+  `:dashboard_debounce_ms` — those live in modules that run their tests in order.
 - Monitor tests must be `async: false` with `set_mox_global`: the monitor and its
   probe tasks are separate processes, so they need the shared sandbox connection
   and a globally visible mock.
@@ -317,6 +702,16 @@ index (ADR-004) is already what makes the clustering step safe.
 - **`attr` and `slot` declarations attach to the next function definition.** A
   private helper defined between them and `def app/1` silently stole the attrs
   and every page using the layout crashed with `BadMapError`.
+- **`mix run` starts the endpoint but does not listen.** Only `mix phx.server` or
+  `PHX_SERVER=true` makes it serve. A scenario script probing the app's own
+  `/dev/flaky` under plain `mix run` gets "connection refused" on every probe,
+  which drives the service down and can look like the scenario working.
+- **`send(self(), msg)` does not jump the queue.** The dashboard debounce first
+  deferred with `send(self(), :reload)` when the window was zero, on the theory
+  that a mailbox delivery beats a timer. It does, but the reload message is
+  appended *behind* a `render` call already sitting in the mailbox, so a test
+  rendering right after a broadcast intermittently saw the previous state. A
+  zero window now re-reads inside the callback and defers nothing.
 - `Float.round/2` rejects integers. Plot coordinates land on whole numbers often
   enough that the chart crashed on any real data; `round2/1` coerces first. The
   LiveView tests missed it because none of them rendered a service that had

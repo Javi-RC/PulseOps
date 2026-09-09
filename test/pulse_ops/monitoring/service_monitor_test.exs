@@ -261,6 +261,134 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
       assert length(Incidents.list_active_incidents(scope)) == 1
     end
 
+    test "reopens after a person resolves the incident while the service is still down", %{
+      scope: scope,
+      service: service
+    } do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      assert [incident] = Incidents.list_active_incidents(scope)
+
+      # Somebody closes the incident by hand, but the service has not recovered:
+      # the monitor is still sitting in :down and will never transition again.
+      {:ok, resolved} = Incidents.resolve_incident(scope, incident)
+      assert resolved.resolved_by_id == scope.user.id
+      assert Incidents.list_active_incidents(scope) == []
+
+      probe(service)
+
+      assert [reopened] = Incidents.list_active_incidents(scope),
+             "a service still down must not be left without an incident (ADR-008)"
+
+      assert reopened.id != incident.id
+    end
+
+    test "records the reopening on the timeline rather than pretending it detected it", %{
+      scope: scope,
+      service: service
+    } do
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      probe(service)
+
+      [reopened] = Incidents.list_active_incidents(scope)
+      assert %{events: [event]} = Incidents.get_incident!(scope, reopened.id)
+      assert event.type == :reopened
+      assert event.description =~ "still down"
+      # Written by the monitor, so nobody is credited with it.
+      assert event.user_id == nil
+    end
+
+    test "a manual resolve holds for the grace period before anything reopens", %{
+      scope: scope,
+      service: service
+    } do
+      # The suite runs with no grace so probes stay deterministic; this is the
+      # one test that exercises a real window.
+      Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
+      on_exit(fn -> Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 0) end)
+
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      probe(service)
+      probe(service)
+
+      assert Incidents.list_active_incidents(scope) == [],
+             "resolving by hand means snooze; reopening immediately would undo the person's action"
+    end
+
+    test "recovering during the grace period leaves the manual resolution standing", %{
+      scope: scope,
+      service: service
+    } do
+      Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
+      on_exit(fn -> Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 0) end)
+
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      stub_result(&healthy/0)
+      probe(service)
+      probe(service)
+
+      assert ServiceMonitor.status(service.id).status == :healthy
+      assert Incidents.list_active_incidents(scope) == []
+      # The manual resolution stands: no second incident was opened and closed
+      # behind the person's back.
+      assert length(Incidents.list_incidents(scope)) == 1
+    end
+
+    test "a real transition back to down is never suppressed by the grace period", %{
+      scope: scope,
+      service: service
+    } do
+      Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
+      on_exit(fn -> Application.put_env(:pulse_ops, :incident_reopen_grace_seconds, 0) end)
+
+      stub_result(&down/0)
+      start_monitor(service)
+      probe(service)
+      probe(service)
+
+      [incident] = Incidents.list_active_incidents(scope)
+      {:ok, _resolved} = Incidents.resolve_incident(scope, incident)
+
+      # The service genuinely recovers, then genuinely breaks again. That is a
+      # new outage, not the one the person snoozed.
+      stub_result(&healthy/0)
+      probe(service)
+      probe(service)
+      assert ServiceMonitor.status(service.id).status == :healthy
+
+      stub_result(&down/0)
+      probe(service)
+      probe(service)
+      probe(service)
+
+      assert [reopened] = Incidents.list_active_incidents(scope)
+      assert reopened.id != incident.id
+    end
+
     test "resolves it when the service recovers", %{scope: scope, service: service} do
       stub_result(&down/0)
       start_monitor(service)
@@ -445,7 +573,7 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
       assert ServiceMonitor.whereis(service.id) == nil
     end
 
-    test "creating a per-service rule restarts the monitor so it re-reads the rule", %{
+    test "creating a per-service rule reaches the running monitor without restarting it", %{
       scope: scope
     } do
       stub_result(&down/0)
@@ -465,19 +593,20 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
           severity: :critical
         })
 
-      restarted = wait_for_new_pid(service.id, original)
-      assert restarted != original
+      # The monitor is told to re-read its rule rather than being replaced, so
+      # the process — and everything it had already counted — survives.
+      assert :ok = await_status(service.id, :down)
+      assert ServiceMonitor.whereis(service.id) == original
 
-      # The rule is read when the monitor boots: wait for the boot probe to be
-      # recorded, then the incident it opened is already in our mailbox.
-      assert :ok = await_failures(service.id, 1)
+      # The boot probe had already recorded one failure. The new rule needs
+      # exactly one, and it is applied to what was already counted rather than
+      # waiting for another probe.
       assert_receive {:incident_opened, incident}, 1_000
       assert incident.service_id == service.id
       assert incident.severity == :critical
-      assert :ok = await_status(service.id, :down)
     end
 
-    test "editing a rule restarts the monitor with the new thresholds", %{scope: scope} do
+    test "editing a rule applies the new thresholds to the running monitor", %{scope: scope} do
       stub_result(&down/0)
 
       service = service_fixture(scope, %{check_interval_ms: 3_600_000})
@@ -501,15 +630,14 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
           severity: :high
         })
 
-      restarted = wait_for_new_pid(service.id, original)
-      assert restarted != original
-
-      # Five failures were too many to prove; one now suffices, and the
-      # boot probe of the restarted monitor delivers it.
+      # Five failures were too many to reach; one now suffices, and the failure
+      # already counted by the boot probe is enough to satisfy it — no further
+      # probe, and no restart.
       assert :ok = await_status(service.id, :down)
+      assert ServiceMonitor.whereis(service.id) == original
     end
 
-    test "changing the organization default restarts every monitor", %{scope: scope} do
+    test "changing the organization default reaches every monitor", %{scope: scope} do
       stub_result(&healthy/0)
 
       one = service_fixture(scope, %{name: "One", check_interval_ms: 3_600_000})
@@ -524,16 +652,24 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
       two_pid = ServiceMonitor.whereis(two.id)
       assert is_pid(one_pid) and is_pid(two_pid)
 
-      # An organization default applies to every service, so all their monitors
-      # must restart for it to reach any of them.
+      # An organization default applies to every service, so every monitor has to
+      # hear about it. It used to be a restart each, in sequence, from the
+      # caller — O(services) of blocking work in a LiveView.
       {:ok, _default} =
         Monitoring.create_alert_rule(scope, %{failure_threshold: 1, success_threshold: 1})
 
-      assert wait_for_new_pid(one.id, one_pid) != one_pid
-      assert wait_for_new_pid(two.id, two_pid) != two_pid
+      # A cast sent from this process is in the monitor's mailbox ahead of a call
+      # made from it afterwards, so by the time status/1 answers, the rule
+      # change has been handled. No polling needed.
+      assert ServiceMonitor.status(one.id).failure_threshold == 1
+      assert ServiceMonitor.status(two.id).failure_threshold == 1
+
+      # Nothing was replaced.
+      assert ServiceMonitor.whereis(one.id) == one_pid
+      assert ServiceMonitor.whereis(two.id) == two_pid
     end
 
-    test "deleting a per-service rule restarts the monitor back on the default", %{
+    test "deleting a per-service rule puts the monitor back on the default", %{
       scope: scope
     } do
       stub_result(&down/0)
@@ -561,14 +697,11 @@ defmodule PulseOps.Monitoring.ServiceMonitorTest do
 
       {:ok, _deleted} = Monitoring.delete_alert_rule(scope, rule)
 
-      restarted = wait_for_new_pid(service.id, original)
-      assert restarted != original
+      assert ServiceMonitor.status(service.id).failure_threshold == 3
+      assert ServiceMonitor.whereis(service.id) == original
 
-      # Back on the hardcoded default, which needs three consecutive failures:
-      # the boot probe plus one more must not be enough, a third one must be.
-      assert :ok = await_failures(service.id, 1)
-      ServiceMonitor.check_now(service.id)
-      assert :ok = await_failures(service.id, 2)
+      # Back on the hardcoded default, which needs three consecutive failures.
+      # Two are already counted and must not be enough; a third must be.
       assert ServiceMonitor.status(service.id).status != :down
 
       ServiceMonitor.check_now(service.id)

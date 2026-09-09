@@ -10,12 +10,15 @@ defmodule PulseOps.Incidents do
 
   import Ecto.Query, warn: false
 
+  require Logger
+
   alias Ecto.Multi
   alias PulseOps.Accounts.Scope
   alias PulseOps.Incidents.Incident
   alias PulseOps.Incidents.IncidentEvent
   alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Service
+  alias PulseOps.Notifications
   alias PulseOps.Organizations
   alias PulseOps.Repo
 
@@ -48,6 +51,52 @@ defmodule PulseOps.Incidents do
   and one no-op rather than a duplicate or a crash (ADR-004).
   """
   def open_incident(%Service{} = service, %AlertRule{} = rule, reason \\ nil) do
+    insert_incident(service, rule, :detected, detection_description(service, reason))
+  end
+
+  @doc """
+  Brings the incident state back in line with the status the monitor is
+  currently observing, when no transition has fired.
+
+  Incidents open and close on a status *transition*, which leaves a hole: a
+  service that is already `:down` never transitions again, so if its incident
+  disappears — most obviously because a person resolved it by hand — the outage
+  carries on with nothing attached to it and nobody told. Monitors reconciled
+  only at boot (ADR-008), so in production that hole did not close until a
+  redeploy. Reconciling after every probe closes it continuously (ADR-009).
+
+  Resolving an open incident on a service that has not recovered is read as
+  "snooze this outage": for `:incident_reopen_grace_seconds` afterwards this
+  returns `{:ok, :suppressed}` rather than immediately undoing what the person
+  did. Only this path is suppressed — a genuine transition back to `:down`
+  always opens an incident.
+  """
+  @spec reconcile_incident(Service.t(), atom(), AlertRule.t()) ::
+          {:ok, :unchanged | :suppressed | Incident.t() | nil} | {:error, term()}
+  def reconcile_incident(service, status, rule)
+
+  def reconcile_incident(%Service{} = service, :down, %AlertRule{} = rule) do
+    cond do
+      get_open_incident(service) ->
+        {:ok, :unchanged}
+
+      recently_resolved_by_hand?(service) ->
+        {:ok, :suppressed}
+
+      true ->
+        insert_incident(service, rule, :reopened, reopen_description(service))
+    end
+  end
+
+  def reconcile_incident(%Service{} = service, status, %AlertRule{})
+      when status in [:healthy, :degraded] do
+    resolve_open_incident(service)
+  end
+
+  # Nothing has been observed yet, so there is nothing to reconcile against.
+  def reconcile_incident(%Service{}, :unknown, %AlertRule{}), do: {:ok, :unchanged}
+
+  defp insert_incident(%Service{} = service, %AlertRule{} = rule, event_type, description) do
     attrs = %{
       service_id: service.id,
       organization_id: service.organization_id,
@@ -61,14 +110,21 @@ defmodule PulseOps.Incidents do
     |> Multi.insert(:event, fn %{incident: incident} ->
       IncidentEvent.changeset(%IncidentEvent{}, %{
         incident_id: incident.id,
-        type: :detected,
-        description: detection_description(service, reason)
+        type: event_type,
+        description: description
       })
     end)
     |> Repo.transaction()
     |> case do
       {:ok, %{incident: incident}} ->
+        Logger.info("incident opened",
+          incident_id: incident.id,
+          service_id: service.id,
+          organization_id: service.organization_id
+        )
+
         broadcast(service.organization_id, {:incident_opened, incident})
+        Notifications.enqueue_incident_notifications(service.organization_id, incident, :opened)
         {:ok, incident}
 
       {:error, :incident, changeset, _changes} ->
@@ -80,6 +136,30 @@ defmodule PulseOps.Incidents do
           {:error, changeset}
         end
     end
+  end
+
+  # A person resolved an incident for this service moments ago. `resolved_by_id`
+  # is what separates that from the monitor closing one itself, which must never
+  # suppress anything.
+  defp recently_resolved_by_hand?(%Service{id: service_id}) do
+    case grace_seconds() do
+      grace when grace <= 0 ->
+        false
+
+      grace ->
+        cutoff = DateTime.add(DateTime.utc_now(:second), -grace, :second)
+
+        Repo.exists?(
+          from i in Incident,
+            where: i.service_id == ^service_id,
+            where: not is_nil(i.resolved_by_id),
+            where: i.resolved_at > ^cutoff
+        )
+    end
+  end
+
+  defp grace_seconds do
+    Application.get_env(:pulse_ops, :incident_reopen_grace_seconds, 300)
   end
 
   @doc """
@@ -103,7 +183,20 @@ defmodule PulseOps.Incidents do
         |> Repo.transaction()
         |> case do
           {:ok, %{incident: incident}} ->
+            Logger.info("incident resolved automatically",
+              incident_id: incident.id,
+              service_id: service.id,
+              organization_id: service.organization_id
+            )
+
             broadcast(service.organization_id, {:incident_resolved, incident})
+
+            Notifications.enqueue_incident_notifications(
+              service.organization_id,
+              incident,
+              :resolved
+            )
+
             {:ok, incident}
 
           {:error, :incident, changeset, _changes} ->
@@ -123,6 +216,9 @@ defmodule PulseOps.Incidents do
 
   defp detection_description(service, reason),
     do: "#{service.name} stopped responding: #{reason}"
+
+  defp reopen_description(service),
+    do: "#{service.name} is still down, so a new incident was opened"
 
   defp already_open?(changeset) do
     Enum.any?(changeset.errors, fn
@@ -238,6 +334,7 @@ defmodule PulseOps.Incidents do
       |> case do
         {:ok, %{incident: updated}} ->
           broadcast(scope.organization.id, {:incident_resolved, updated})
+          Notifications.enqueue_incident_notifications(scope.organization.id, updated, :resolved)
           {:ok, updated}
 
         {:error, :incident, changeset, _changes} ->
