@@ -257,6 +257,14 @@ defmodule PulseOpsWeb.ServiceLive.Form do
                 Turning this off stops the supervised process for this service. Its history is kept.
               </p>
 
+              <div class="mt-4">
+                <.input field={@form[:public]} type="checkbox" label="Show on the status page" />
+                <p class="mt-1 text-xs text-base-content/50">
+                  Only matters once the organization publishes a status page. The name, status and
+                  uptime are shown; the URL never is.
+                </p>
+              </div>
+
               <%!-- Status and last checked belong to the monitor, not to this
                     form, so they are deliberately absent. --%>
             </.card>

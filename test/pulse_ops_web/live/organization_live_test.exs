@@ -48,12 +48,86 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
     end
   end
 
+  describe "publishing the status page" do
+    test "the toggle publishes it and offers the link", %{conn: conn, scope: scope} do
+      {:ok, live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+      refute html =~ "View the page"
+
+      html =
+        live
+        |> form("#status-page-form",
+          organization: %{status_page_enabled: "true", status_page_headline: "We watch things"}
+        )
+        |> render_submit()
+
+      assert html =~ "Status page published"
+      assert html =~ "View the page"
+
+      organization = Repo.reload!(scope.organization)
+      assert organization.status_page_enabled
+      assert organization.status_page_headline == "We watch things"
+    end
+
+    test "turning it off takes it down", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+
+      live
+      |> form("#status-page-form", organization: %{status_page_enabled: "true"})
+      |> render_submit()
+
+      html =
+        live
+        |> form("#status-page-form", organization: %{status_page_enabled: "false"})
+        |> render_submit()
+
+      assert html =~ "Status page taken down"
+      refute Repo.reload!(scope.organization).status_page_enabled
+    end
+
+    test "the toggle cannot be used to rename the organization", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+
+      # A crafted submit carrying fields this control has no business changing.
+      live
+      |> render_submit("save_status_page", %{
+        "organization" => %{
+          "status_page_enabled" => "true",
+          "name" => "Hijacked",
+          "slug" => "hijacked"
+        }
+      })
+
+      organization = Repo.reload!(scope.organization)
+      assert organization.status_page_enabled
+      refute organization.name == "Hijacked"
+      refute organization.slug == "hijacked"
+    end
+
+    test "a viewer cannot publish it", %{conn: conn, scope: scope, user: user} do
+      # Demoted before mounting, because the scope is built at mount: a role
+      # change mid-session does not reach a socket that is already open.
+      demote_to_viewer(scope, user)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+
+      html =
+        live
+        |> form("#status-page-form", organization: %{status_page_enabled: "true"})
+        |> render_submit()
+
+      assert html =~ "do not have permission"
+      refute Repo.reload!(scope.organization).status_page_enabled
+    end
+  end
+
   describe "organization settings" do
     test "renames the organization", %{conn: conn, scope: scope} do
       {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
 
       live
-      |> form("form", organization: %{name: "Renamed", slug: scope.organization.slug})
+      |> form("#organization-form",
+        organization: %{name: "Renamed", slug: scope.organization.slug}
+      )
       |> render_submit()
 
       assert Repo.reload!(scope.organization).name == "Renamed"
@@ -76,7 +150,9 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
 
       html =
         live
-        |> form("form", organization: %{name: "Nope", slug: scope.organization.slug})
+        |> form("#organization-form",
+          organization: %{name: "Nope", slug: scope.organization.slug}
+        )
         |> render_submit()
 
       assert html =~ "do not have permission"

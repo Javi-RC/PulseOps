@@ -31,6 +31,7 @@ defmodule PulseOps.Monitoring.Service do
     field :check_interval_ms, :integer, default: 60_000
     field :timeout_ms, :integer, default: 5_000
     field :enabled, :boolean, default: true
+    field :public, :boolean, default: true
     field :status, Ecto.Enum, values: @statuses, default: :unknown
     field :last_checked_at, :utc_datetime
 
@@ -57,7 +58,8 @@ defmodule PulseOps.Monitoring.Service do
       :url,
       :check_interval_ms,
       :timeout_ms,
-      :enabled
+      :enabled,
+      :public
     ])
     |> validate_required([:name, :environment, :url, :check_interval_ms, :timeout_ms])
     |> validate_length(:name, min: 2, max: 80)

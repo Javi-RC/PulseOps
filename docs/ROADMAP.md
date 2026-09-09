@@ -260,7 +260,7 @@ Make the system survive realistic data and observe itself.
 
 Turn the engine into something other people interact with.
 
-- [ ] Public status page (see [Star features](#star-features))
+- [x] Public status page (see [Star features](#star-features))
 - [ ] JSON API + organization tokens
 - [ ] Configurable checks: HTTP method, headers, expected status, body assertion
 - [ ] Email invitations for people who are not registered yet

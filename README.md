@@ -41,6 +41,16 @@ Start here, in this order:
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
 4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
 
+## Public status page
+
+An organization can publish a page at `/status/:slug` that anyone can read
+without an account, updating live over the same WebSocket the dashboard uses.
+Service names, statuses and uptime appear on it; service URLs, incident causes
+and timelines never do, and an organization that has not published is
+indistinguishable from one that does not exist. Turn it on in organization
+settings, and exclude individual services with their "Show on the status page"
+checkbox.
+
 ## Metrics
 
 PulseOps exposes its own health to Prometheus at `/metrics`, behind a bearer

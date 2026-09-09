@@ -211,6 +211,60 @@ Without it, every finished hour would simply be missing from the dashboard.
 
 ---
 
+## ADR-011 — Unauthenticated reads live in one context, and select their columns
+
+**Decision.** The public status page reads through `PulseOps.StatusPage`, a
+context of its own, and nowhere else. Its queries name the columns they return
+rather than loading schemas. An organization publishes nothing until
+`status_page_enabled` is set, and a service appears only while its own `public`
+flag is set. `Scope.for_public_organization/1` builds a scope carrying the
+organization with no user and no role, so the existing read functions filter by
+tenant exactly as they do for a member while `Organizations.can?/2` denies
+every action.
+
+**Why a separate context.** Everywhere else, a context function takes a
+`%Scope{}` whose holder got through `on_mount :require_organization`. That is
+the property the whole tenancy design rests on (ADR-001), and the status page
+breaks it on purpose: anybody with a URL can call these functions. Spreading
+that exception through `Monitoring` and `Incidents` as `public_`-prefixed
+functions would put unauthenticated reads next to authenticated ones, where the
+next person to add a function has to notice which kind they are writing. One
+module is one file to review, and its name says what it is.
+
+**Why the queries select columns.** A service's `url` is frequently an internal
+hostname — it is the reason `UrlGuard` exists. An incident's `cause` and its
+timeline are written by staff for staff. If those columns were loaded and simply
+not rendered, the guarantee would live in a template, and templates get edited
+by people who did not read this file. Not fetching them means no future markup
+change can leak one, and the test that asserts it is checking something the
+database enforces rather than something the current markup happens to do.
+
+**Why two flags.** They answer different questions. `status_page_enabled` is
+"does this organization publish at all", and it is off until somebody turns it
+on. `services.public` is "does this service belong on the page", and it defaults
+to **true**, because turning the page on is a statement about the things you are
+watching; a page that starts empty and needs every service ticked reads as
+broken rather than as careful. The URL is withheld either way, so the default
+discloses a name and a status, not an address.
+
+**Rejected.** *One organization-level flag only.* It forces a tenant watching
+both a public API and an internal admin host to choose between publishing both
+or neither.
+
+*Defaulting `services.public` to false.* Safer in the abstract, and it makes
+enabling the page look broken, which in practice means people leave it off.
+
+*Reusing `list_services/1` and `list_incidents/2` with a synthetic scope.* It
+works — the scope is only read for its organization id — and it would return
+full schema structs with `url` and `cause` loaded, putting the guarantee back
+into the templates.
+
+**Consequence.** An organization that has not published is indistinguishable
+from one that does not exist: both raise `StatusPageLive.NotFound` and answer
+404. The page cannot be used to discover who has an account here.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

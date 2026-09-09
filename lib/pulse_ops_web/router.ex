@@ -108,6 +108,19 @@ defmodule PulseOpsWeb.Router do
     post "/users/update-password", UserSessionController, :update_password
   end
 
+  # The public status page. Outside every authenticated live_session on purpose:
+  # the point is that a reader gets it without an account. It still receives the
+  # current scope so a signed-in visitor keeps their own header, and
+  # PulseOps.StatusPage is the only context it can reach.
+  scope "/", PulseOpsWeb do
+    pipe_through [:browser]
+
+    live_session :public_status_page,
+      on_mount: [{PulseOpsWeb.UserAuth, :mount_current_scope}] do
+      live "/status/:slug", StatusPageLive, :show
+    end
+  end
+
   scope "/", PulseOpsWeb do
     pipe_through [:browser]
 

@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | Phase 2 of [`ROADMAP.md`](ROADMAP.md) complete — scale and visibility (v0.4.0) |
-| Next | Phase 3 of [`ROADMAP.md`](ROADMAP.md) — product surface |
-| Checks | `mix check` green: 470 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/public-status-page` |
+| Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) in progress — product surface |
+| Next | F9 — production image, `force_ssl`, mandatory `PHX_HOST` |
+| Checks | `mix check` green: 501 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -608,6 +608,43 @@ label anywhere in the output.
   `Req.Test` seam the webhook sender has (`health_check_transport: :stub`) and
   six tests covering the response mapping and the guard — including one asserting
   a private target is refused **without any request being attempted**.
+
+
+### Phase 3 — public status page
+
+- `/status/:slug`, unauthenticated, live over the same PubSub topics the
+  signed-in dashboard uses. The roadmap's star feature: it turns "I watch my
+  services" into "my customers watch my services", and it is what makes the
+  project demonstrable without handing anyone credentials.
+- **All unauthenticated reads live in `PulseOps.StatusPage`.** Everywhere else a
+  context function takes a `%Scope{}` whose holder got through
+  `on_mount :require_organization`; this breaks that on purpose, so it is one
+  file to review rather than `public_`-prefixed functions sitting next to scoped
+  ones. See **ADR-011**.
+- **The queries name their columns.** A service's `url` is usually an internal
+  hostname — it is why `UrlGuard` exists — and an incident's `cause` and timeline
+  are written by staff for staff. None are fetched at all, so the guarantee is
+  not "the template does not render it" and cannot be undone by editing markup.
+- **Two flags, because they answer different questions.**
+  `organizations.status_page_enabled` is off until somebody turns it on;
+  `services.public` defaults to **true**, because publishing a page is a
+  statement about what you are watching and a page that starts empty reads as
+  broken rather than as careful.
+- An organization that has not published is **indistinguishable from one that
+  does not exist** — both 404 — so the page cannot be used to find out who has
+  an account here.
+- `Scope.for_public_organization/1` carries the organization with no user and no
+  role, so the existing read functions filter by tenant exactly as for a member
+  while `Organizations.can?/2` denies every action. The visitor goes through the
+  same authorization code path, not a parallel one.
+- Published from organization settings, with its own form. The handler takes
+  only the two status page fields, so the control cannot become a second way to
+  rename the organization or move its slug — there is a test that tries.
+
+**Verified against the running app** with `priv/scenarios/status_page.exs`: 404
+before publishing and for a slug that never existed, the public service listed
+and the held-back one absent, and neither the service URL, its hostname, a member
+email, nor the incident cause anywhere in the HTML.
 
 
 ## Next steps

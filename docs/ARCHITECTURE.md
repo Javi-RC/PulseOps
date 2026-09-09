@@ -100,7 +100,7 @@ organizations ──┬── organization_members ──── users
 ```
 
 - `services` — name, description, environment, url, `check_interval_ms`,
-  `timeout_ms`, `enabled`, current `status`, `last_checked_at`.
+  `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`.
 - `alert_rules` — failure/success thresholds and a severity for incident handling;
   `service_id` null is the organization default, otherwise it overrides one
   service. Monitors read their rule on boot, so changing a rule restarts every
@@ -165,6 +165,15 @@ filters by `scope.organization.id`. See ADR-001.
 Roles: `owner` and `admin` may write, `member` may act on incidents, `viewer` is
 read-only. Authorization is enforced in the contexts, not by hiding buttons.
 
+The one deliberate exception is the public status page at `/status/:slug`, which
+anybody can read. It goes through `PulseOps.StatusPage` and nowhere else — a
+context of its own, so the exception is a file to review rather than a scattering
+of unauthenticated functions among scoped ones. Its queries name the columns they
+return, so a service's `url` and an incident's `cause` are never fetched and no
+template change can start leaking them. An organization publishes nothing until
+`status_page_enabled` is set; a service appears only while its `public` flag is.
+See ADR-011.
+
 ## PubSub topics
 
 | Topic | Carries | Subscribed by |
@@ -172,6 +181,10 @@ read-only. Authorization is enforced in the contexts, not by hiding buttons.
 | `organization:{id}:services` | service status transitions | dashboard |
 | `organization:{id}:incidents` | incident opened / changed / resolved | dashboard, incident list |
 | `service:{id}:checks` | every individual check result | service detail page only |
+
+The public status page subscribes to the first two, so an outage reaches a
+reader's open tab over the connection it already has, as fast as it reaches the
+on-call dashboard.
 
 See ADR-003.
 

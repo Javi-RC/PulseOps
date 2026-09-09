@@ -17,7 +17,8 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
      socket
      |> assign(:page_title, "Settings")
      |> assign(:organization, organization)
-     |> assign(:form, to_form(Organizations.change_organization(organization)))}
+     |> assign(:form, to_form(Organizations.change_organization(organization)))
+     |> assign(:status_page_form, to_form(Organizations.change_organization(organization)))}
   end
 
   @impl true
@@ -45,6 +46,39 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
         {:noreply, assign(socket, :form, to_form(changeset))}
     end
   end
+
+  def handle_event("validate_status_page", %{"organization" => params}, socket) do
+    changeset = Organizations.change_organization(socket.assigns.organization, params)
+
+    {:noreply, assign(socket, :status_page_form, to_form(changeset, action: :validate))}
+  end
+
+  def handle_event("save_status_page", %{"organization" => params}, socket) do
+    scope = socket.assigns.current_scope
+
+    # Only the two status page fields, whatever else the form posted: this
+    # control must not become a second way to rename the organization or move
+    # its slug.
+    params = Map.take(params, ["status_page_enabled", "status_page_headline"])
+
+    case Organizations.update_organization(scope, socket.assigns.organization, params) do
+      {:ok, organization} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, status_page_flash(organization))
+         |> assign(:organization, organization)
+         |> assign(:status_page_form, to_form(Organizations.change_organization(organization)))}
+
+      {:error, :unauthorized} ->
+        {:noreply, put_flash(socket, :error, "You do not have permission to do that.")}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :status_page_form, to_form(changeset))}
+    end
+  end
+
+  defp status_page_flash(%{status_page_enabled: true}), do: "Status page published."
+  defp status_page_flash(_organization), do: "Status page taken down."
 
   @impl true
   def render(assigns) do
@@ -77,6 +111,48 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
           </div>
 
           <.button variant="primary" phx-disable-with="Saving...">Save changes</.button>
+        </.form>
+      </.card>
+
+      <.card class="mt-6 max-w-xl">
+        <.form
+          for={@status_page_form}
+          id="status-page-form"
+          phx-change="validate_status_page"
+          phx-submit="save_status_page"
+          class="space-y-4"
+        >
+          <div>
+            <p class="font-medium">Public status page</p>
+            <p class="mt-0.5 text-sm text-base-content/50">
+              A page anybody can read without an account, at <code class="text-xs">/status/{@organization.slug}</code>. Service names, statuses
+              and uptime appear on it. URLs, incident causes and timelines never do.
+            </p>
+          </div>
+
+          <.input
+            field={@status_page_form[:status_page_enabled]}
+            type="checkbox"
+            label="Publish a status page"
+          />
+
+          <.input
+            field={@status_page_form[:status_page_headline]}
+            type="text"
+            label="Headline"
+            placeholder="Live status of our services"
+          />
+
+          <div class="flex items-center gap-3">
+            <.button variant="primary" phx-disable-with="Saving...">Save</.button>
+            <.link
+              :if={@organization.status_page_enabled}
+              navigate={~p"/status/#{@organization.slug}"}
+              class="btn btn-soft btn-sm"
+            >
+              View the page
+            </.link>
+          </div>
         </.form>
       </.card>
 
