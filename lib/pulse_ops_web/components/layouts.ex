@@ -388,6 +388,12 @@ defmodule PulseOpsWeb.Layouts do
         href: ~p"/orgs/#{slug}/incidents",
         match: :prefix
       },
+      %{
+        label: "Maintenance",
+        icon: "lucide-calendar-clock",
+        href: ~p"/orgs/#{slug}/maintenance",
+        match: :prefix
+      },
       %{label: "Members", icon: "lucide-users", href: ~p"/orgs/#{slug}/members", match: :prefix}
     ]
 

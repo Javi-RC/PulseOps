@@ -372,6 +372,57 @@ already have.
 
 ---
 
+## ADR-014 — Maintenance suppresses the consequence, not the monitoring
+
+**Decision.** A maintenance window is a time range, optionally narrowed to one
+service. During it, probes still run, checks are still recorded and the service's
+status still changes — what does not happen is that an **incident opens**. The
+check lives in `Incidents`, in the one private function both paths into an
+incident go through.
+
+Nothing schedules the end of the suppression. When a window finishes with the
+service still broken, the next probe reconciles and opens an incident then
+(ADR-009).
+
+**Why suppress the consequence and not the checks.** Stopping the probes during a
+window would be simpler and would produce a hole in the history exactly where
+somebody later wants to know what happened — "was it already broken before the
+deploy?" is the first question after a bad release, and it is unanswerable if
+nothing was recorded. Recording everything and holding back only the paging keeps
+the dashboard, the uptime figures and the chart honest.
+
+**Why in `Incidents` and not in `ServiceMonitor.transition/3`.** The roadmap said
+`transition/3` is the single gate, and it *was* — until F1 gave incidents a
+second way to open, through reconciliation. Suppressing at the transition alone
+would leave a service that was already down when the window started getting an
+incident from the reconciliation on its next probe: the window would silence
+new outages and not the one it was scheduled for. Both paths funnel into
+`insert_incident/4`, which is where the check belongs.
+
+**Why nothing schedules the un-suppression.** A timer that reopens incidents when
+a window ends is a second mechanism that can fail, drift, or fire against a
+service that recovered in the meantime. Reconciliation already asks "is this
+service down with no incident?" on every probe, so the silence lifts itself, and
+the incident that follows carries a `:reopened` event that says how it came
+about. This is F1 paying for itself.
+
+**Rejected.** *Pausing the monitors.* Loses the history and needs the monitors
+restarted afterwards, which is the O(n) blocking work F7 removed.
+
+*Suppressing the notifications instead of the incidents.* The incident would
+still open, so the dashboard, the status page and the incident list would all
+show an outage nobody was told about — the worst of both.
+
+*Suppressing the resolution too.* Telling people something recovered is not a
+page in the night, and withholding it would make the timeline lie.
+
+**Consequence.** An incident already open when a window starts is left alone: a
+window says "expect trouble from now on", not "forget what is already broken".
+A window is capped at 31 days, because beyond that it is not maintenance, it is
+a service nobody wants to hear about — and the way to say that is to disable it.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

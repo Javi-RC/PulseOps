@@ -200,4 +200,83 @@ defmodule PulseOpsWeb.StatusPageLiveTest do
       refute html =~ "Open incidents"
     end
   end
+
+  describe "planned maintenance" do
+    setup %{conn: conn} do
+      scope = publish(organization_scope_fixture())
+      service = service_fixture(scope, %{name: "Payments API"})
+      %{conn: conn, scope: scope, service: service}
+    end
+
+    defp schedule(scope, attrs \\ %{}) do
+      {:ok, window} =
+        PulseOps.Maintenance.create_window(
+          scope,
+          Enum.into(attrs, %{
+            reason: "Deploying the new release",
+            starts_at: DateTime.add(DateTime.utc_now(:second), -60, :second),
+            ends_at: DateTime.add(DateTime.utc_now(:second), 3600, :second)
+          })
+        )
+
+      window
+    end
+
+    test "announces a running window", %{conn: conn, scope: scope} do
+      schedule(scope)
+
+      {:ok, _live, html} = live(conn, ~p"/status/#{scope.organization.slug}")
+
+      assert html =~ "Planned maintenance"
+      assert html =~ "Deploying the new release"
+    end
+
+    test "a service down during a window does not read as an outage", %{
+      conn: conn,
+      scope: scope,
+      service: service
+    } do
+      Monitoring.update_service_status(service, :down)
+      schedule(scope)
+
+      {:ok, _live, html} = live(conn, ~p"/status/#{scope.organization.slug}")
+
+      # The status is still reported honestly; what changes is that it is not
+      # announced as an unplanned outage.
+      assert html =~ "Down for planned maintenance"
+      refute html =~ "We are having an outage"
+    end
+
+    test "marks a service that a window covers", %{conn: conn, scope: scope} do
+      other = service_fixture(scope, %{name: "Search"})
+      schedule(scope, %{service_id: other.id})
+
+      {:ok, live, _html} = live(conn, ~p"/status/#{scope.organization.slug}")
+
+      # Which services a window covers is asserted precisely in the context
+      # test; here it is enough that the page marks one.
+      assert has_element?(live, "span.badge-info", "Maintenance")
+    end
+
+    test "says nothing once the window has ended", %{conn: conn, scope: scope} do
+      schedule(scope, %{
+        starts_at: DateTime.add(DateTime.utc_now(:second), -3600, :second),
+        ends_at: DateTime.add(DateTime.utc_now(:second), -60, :second)
+      })
+
+      {:ok, _live, html} = live(conn, ~p"/status/#{scope.organization.slug}")
+
+      refute html =~ "Planned maintenance"
+    end
+
+    test "another organization's window is not announced here", %{conn: conn, scope: scope} do
+      other = organization_scope_fixture()
+      schedule(other, %{reason: "Theirs"})
+
+      {:ok, _live, html} = live(conn, ~p"/status/#{scope.organization.slug}")
+
+      refute html =~ "Planned maintenance"
+      refute html =~ "Theirs"
+    end
+  end
 end

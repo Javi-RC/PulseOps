@@ -16,6 +16,7 @@ defmodule PulseOps.Incidents do
   alias PulseOps.Accounts.Scope
   alias PulseOps.Incidents.Incident
   alias PulseOps.Incidents.IncidentEvent
+  alias PulseOps.Maintenance
   alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Service
   alias PulseOps.Notifications
@@ -49,6 +50,10 @@ defmodule PulseOps.Incidents do
   existing incident if one is already open. The partial unique index is what
   actually guarantees that, so a race between two monitors ends with one insert
   and one no-op rather than a duplicate or a crash (ADR-004).
+
+  Returns `{:ok, :suppressed}` when the service is inside a maintenance window:
+  the probe still happened and was still recorded, but nobody is paged for a
+  deploy somebody scheduled.
   """
   def open_incident(%Service{} = service, %AlertRule{} = rule, reason \\ nil) do
     insert_incident(service, rule, :detected, detection_description(service, reason))
@@ -73,6 +78,8 @@ defmodule PulseOps.Incidents do
   """
   @spec reconcile_incident(Service.t(), atom(), AlertRule.t()) ::
           {:ok, :unchanged | :suppressed | Incident.t() | nil} | {:error, term()}
+  # `:suppressed` covers both reasons an incident may not open: a manual
+  # resolution still inside its grace period, and a maintenance window.
   def reconcile_incident(service, status, rule)
 
   def reconcile_incident(%Service{} = service, :down, %AlertRule{} = rule) do
@@ -97,6 +104,22 @@ defmodule PulseOps.Incidents do
   def reconcile_incident(%Service{}, :unknown, %AlertRule{}), do: {:ok, :unchanged}
 
   defp insert_incident(%Service{} = service, %AlertRule{} = rule, event_type, description) do
+    if Maintenance.under_maintenance?(service) do
+      # Both paths into an incident come through here — the transition hook and
+      # reconciliation — so this is the one place suppression has to live. The
+      # check is only made when an incident is about to open, which is rare;
+      # a probe that changes nothing never asks.
+      #
+      # Nothing schedules the un-suppression: when the window ends with the
+      # service still down, the next probe reconciles and opens an incident
+      # then (ADR-009).
+      {:ok, :suppressed}
+    else
+      do_insert_incident(service, rule, event_type, description)
+    end
+  end
+
+  defp do_insert_incident(%Service{} = service, %AlertRule{} = rule, event_type, description) do
     attrs = %{
       service_id: service.id,
       organization_id: service.organization_id,

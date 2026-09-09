@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) complete — product surface (v0.5.0) |
-| Next | Phase 4 of [`ROADMAP.md`](ROADMAP.md) — operational reliability |
-| Checks | `mix check` green: 600 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/maintenance-windows` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) in progress — operational reliability |
+| Next | Anti-flapping, notification grouping and escalation |
+| Checks | `mix check` green: 637 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -782,6 +782,46 @@ real HTTP and driving the form the way a browser does, CSRF token and session
 cookie included: the page readable with no session, **fetching it creating no
 account**, the POST creating a confirmed account and a membership, and a second
 POST refused.
+
+
+### Phase 4 — maintenance windows
+
+- A planned deploy looked exactly like an outage: probes fail, an incident
+  opens, everyone on the notifier list is woken up for something somebody
+  scheduled. The roadmap calls this the number one failure of any alerting
+  system in real use.
+- A window is a time range, optionally narrowed to one service. **Probes still
+  run, checks are still recorded, the status still changes** — what is held back
+  is the incident. Stopping the checks would leave a hole in the history exactly
+  where somebody later asks "was it already broken before the deploy?".
+- **The check is in `Incidents`, not in `transition/3`.** The roadmap said the
+  transition is the single gate, and it *was* — until F1 gave incidents a second
+  way to open. Suppressing only the transition would have silenced new outages
+  and not the one the window was scheduled for, because a service already down
+  would get an incident from reconciliation on its next probe. Both paths funnel
+  into `insert_incident/4`. See **ADR-014**.
+- **Nothing schedules the end of the silence.** When a window finishes with the
+  service still broken, the next probe reconciles and opens an incident then,
+  carrying a `:reopened` event. That is F1 paying for itself — the roadmap
+  expected Oban here and no job is needed.
+- Notification suppression falls out of it rather than being a second rule: no
+  incident opened, so there is nothing to announce. A *recovery* during a window
+  is still announced, because that is not a page in the night.
+- The public status page announces a running window and marks the services it
+  covers, and its banner says "Down for planned maintenance" rather than
+  crying outage.
+- Windows are capped at 31 days, validated against the tenant like alert rules
+  and notifiers, and a database constraint refuses one that ends before it
+  starts.
+- **A test caught a real bug**: a window aimed at a service the status page does
+  not publish was still putting that service's id into the map the page reads by
+  id. The coverage assertion had started life as a brittle substring count in the
+  web test; moving it to the context, where it could be precise, is what found it.
+
+**Verified against the running app** with
+`priv/scenarios/maintenance_windows.exs`: `/dev/flaky` genuinely broken, probes
+genuinely failing, the service genuinely reading down — **and no incident**. Then
+the window is cancelled and the very next probe opens one, by reconciliation.
 
 
 ## Next steps

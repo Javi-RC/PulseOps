@@ -115,6 +115,7 @@ defmodule PulseOpsWeb.Router do
       live "/orgs/:org/settings/notifiers/new", NotifierLive.Form, :new
       live "/orgs/:org/settings/notifiers/:id/edit", NotifierLive.Form, :edit
       live "/orgs/:org/settings/api-tokens", ApiTokenLive.Index, :index
+      live "/orgs/:org/maintenance", MaintenanceLive.Index, :index
     end
 
     post "/users/update-password", UserSessionController, :update_password

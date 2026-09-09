@@ -91,6 +91,16 @@ payload that its database is gone. The monitor builds those options and the HTTP
 client stays a function of a URL and a keyword list, never learning what a
 `Service` is.
 
+A maintenance window suppresses the *consequence* of a failure, not the
+monitoring of it: probes still run, checks are still recorded and the status
+still changes, but no incident opens, so a planned deploy pages nobody. The check
+sits in `Incidents`, in the one function both paths into an incident go
+through — the transition hook and reconciliation — because suppressing only the
+transition would let a service that was already down get an incident from the
+next reconciliation. Nothing schedules the end of the silence: when the window
+finishes with the service still broken, the next probe reconciles and opens one
+then. See ADR-014.
+
 Deciding *what the status is* is not part of the monitor. `StatusMachine` is a
 pure module — no processes, no database, no clock — that folds probe verdicts
 into a status under the rule's thresholds. The monitor owns the I/O and the
@@ -106,6 +116,7 @@ organizations ──┬── organization_members ──── users
                 ├── notifiers                 (webhook URL or email per organization)
                 ├── api_tokens                (hashed; acts as the user who made it)
                 ├── organization_invitations  (hashed; single use, expires)
+                ├── maintenance_windows       (org-wide or one service; suppresses incidents)
                 └── services ──┬── service_checks ──── service_check_rollups
                                └── incidents ──── incident_events
 ```

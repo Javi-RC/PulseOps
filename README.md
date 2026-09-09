@@ -81,6 +81,16 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## Maintenance windows
+
+Schedule a window before a deploy and PulseOps stops paging for it. The probes
+keep running and the history stays honest — the status still changes, the uptime
+figures still count it — but no incident opens, and the status page tells your
+customers it was planned.
+
+Nothing has to be turned back on: when the window ends with the service still
+broken, the next check opens an incident.
+
 ## Inviting people
 
 Adding somebody on the members page adds them straight away if they already have

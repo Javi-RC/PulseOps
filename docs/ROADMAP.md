@@ -271,7 +271,7 @@ Turn the engine into something other people interact with.
 
 Behave like an actual on-call tool.
 
-- [ ] Maintenance windows and silencing
+- [x] Maintenance windows and silencing
 - [ ] Anti-flapping, notification grouping, escalation
 - [ ] TLS certificate expiry watching
 - [ ] UX: time-window selector, destructive-delete confirmation, incident
