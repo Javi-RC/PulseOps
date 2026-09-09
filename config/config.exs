@@ -102,6 +102,13 @@ config :pulse_ops, :incident_reopen_grace_seconds, 300
 # The cost is up to this much latency on a status appearing.
 config :pulse_ops, :dashboard_debounce_ms, 250
 
+# Whether tenants may point a service or a webhook at a private, loopback or
+# link-local address. False here so production is safe by default; development
+# and test turn it on, because localhost is what they watch. See
+# `PulseOps.Monitoring.UrlGuard` — an installation that legitimately monitors a
+# private network sets this to true.
+config :pulse_ops, :allow_private_targets, false
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

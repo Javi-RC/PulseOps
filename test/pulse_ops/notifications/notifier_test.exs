@@ -30,7 +30,7 @@ defmodule PulseOps.Notifications.NotifierTest do
       changeset =
         Notifier.changeset(%Notifier{}, %{name: "Pager", type: :webhook, url: "not-a-url"}, scope)
 
-      assert %{url: ["must be an http(s) URL"]} = errors_on(changeset)
+      assert %{url: ["must be a valid http or https URL"]} = errors_on(changeset)
     end
 
     test "an email does not require a URL and a webhook does not need assignments" do

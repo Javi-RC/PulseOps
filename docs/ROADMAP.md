@@ -233,7 +233,7 @@ other, so this order is purely decreasing risk; each is its own commit.
 - [x] **F2** Partial unique index for the organization-default rule
 - [x] **F3** Validate `service_id` tenancy in `AlertRule`
 - [x] **F4** Dashboard debounce (the cheap half of F4)
-- [ ] **F5** SSRF mitigation (`UrlGuard`)
+- [x] **F5** SSRF mitigation (`UrlGuard`)
 - [ ] **F6** Batched retention + index
 - [ ] Housekeeping: `mix.exs` to `0.3.0`, delete `.github;W` and `erl_crash.dump`
 

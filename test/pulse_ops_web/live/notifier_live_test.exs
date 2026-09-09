@@ -174,7 +174,7 @@ defmodule PulseOpsWeb.NotifierLiveTest do
         |> render_change()
 
       assert html =~ "can&#39;t be blank"
-      assert html =~ "must be an http(s) URL"
+      assert html =~ "must be a valid http or https URL"
     end
   end
 

@@ -28,6 +28,7 @@ defmodule PulseOps.Notifications.Notifier do
 
   alias PulseOps.Accounts.Scope
   alias PulseOps.Monitoring.Service
+  alias PulseOps.Monitoring.UrlGuard
   alias PulseOps.Notifications.NotifierAssignment
   alias PulseOps.Organizations.Organization
   alias PulseOps.Repo
@@ -86,11 +87,23 @@ defmodule PulseOps.Notifications.Notifier do
       :webhook ->
         changeset
         |> validate_required([:url])
-        |> validate_format(:url, ~r/^https?:\/\/\S+$/i, message: "must be an http(s) URL")
+        |> validate_webhook_url()
 
       _other ->
         changeset
     end
+  end
+
+  # A webhook is fetched from inside the network PulseOps runs in, so a tenant
+  # supplying the URL is the same SSRF exposure as a monitored service. The same
+  # guard runs again in WebhookSender, just before the request.
+  defp validate_webhook_url(changeset) do
+    validate_change(changeset, :url, fn :url, value ->
+      case UrlGuard.validate(value) do
+        :ok -> []
+        {:error, reason} -> [url: UrlGuard.message(reason)]
+      end
+    end)
   end
 
   # When a service is set, it must belong to the same organization as the

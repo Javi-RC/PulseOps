@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/incident-notifications` |
 | Phase | Stabilisation — Phase 1 of [`ROADMAP.md`](ROADMAP.md); F1 done |
-| Next | F5 — SSRF mitigation (`UrlGuard`) |
-| Checks | `mix check` green: 410 tests, Credo `--strict` clean, Dialyzer clean |
+| Next | F6 — batched retention + index, then the repo housekeeping |
+| Checks | `mix check` green: 424 tests, Credo `--strict` clean, Dialyzer clean |
 
 
 ## Commands
@@ -381,6 +381,35 @@ standing, and a real recover-then-break-again cycle not being suppressed.
   the pid keeps a concurrently running test's queries out of the count — and
   asserts a ten-message burst costs exactly what a single message costs.
 
+### Stabilisation — F5: SSRF guard on tenant-supplied URLs
+
+- Both the health checks and the outgoing webhooks fetch a URL somebody typed
+  into a form, from inside the network PulseOps runs in. Neither
+  `Service.changeset/3` nor `Notifier.changeset/3` did more than an http(s)
+  format check, so any tenant could register
+  `http://169.254.169.254/latest/meta-data/` or `http://localhost:5432` as a
+  "service" and have the dashboard report back its HTTP status and response
+  time, on a schedule.
+- `PulseOps.Monitoring.UrlGuard` is a pure module: it checks the scheme,
+  resolves the host, and rejects loopback, RFC 1918, link-local, CGNAT,
+  benchmark, multicast and reserved IPv4, plus unspecified, loopback,
+  unique-local and link-local IPv6. **Both IPv4-in-IPv6 forms are unwrapped and
+  judged as IPv4**, or `::ffff:127.0.0.1` walks straight past.
+- A host resolving to nothing is rejected rather than allowed, so the guard
+  cannot fail open. Every address a name answers with must pass — one public
+  answer alongside a private one is still a way in.
+- **The guard runs twice.** The changeset is not enough: a name can be repointed
+  at a private address between saving and fetching (DNS rebinding), and the check
+  interval keeps that window open for as long as the service exists. So
+  `HealthCheck.Req.check/2` and `WebhookSender.deliver/3` check again immediately
+  before the request. A blocked probe is recorded as a failed check carrying the
+  reason, rather than silently not happening.
+- `:allow_private_targets` is **false in production, true in development and
+  test** — plenty of installations exist to watch a private network, and the
+  guard would break them. The scheme check applies either way.
+- Tested with the ranges spelled out, plus two StreamData properties over IPv4
+  host bits — the first use of StreamData, which was declared and unused.
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -395,7 +424,8 @@ next work is stabilisation rather than new features:
    fixed, see the F3 section above.
 4. ~~The dashboard reloads four queries on every broadcast~~ — debounced, see
    the F4 section above. The queries themselves are still Phase 2 work.
-5. Service and webhook URLs allow SSRF into the internal network.
+5. ~~Service and webhook URLs allow SSRF into the internal network~~ — fixed
+   by `UrlGuard`, see the F5 section above.
 
 Metric rollups (the original V2 item) are Phase 2 there, together with
 observability and hot rule propagation. Activity log, clustering with leader
@@ -425,6 +455,11 @@ unique index (ADR-004) is already what makes the clustering step safe.
   Registry drops its entry only when it handles the `:DOWN`. `stop_monitor/1`
   therefore waits for the name to be released, or `restart_monitor/1` would fail
   with `{:already_started, <dead pid>}`.
+- **Application env is global, so a test that flips it cannot be `async: true`.**
+  `UrlGuardTest` toggles `:allow_private_targets` and, while async, failed
+  unrelated modules whose fixtures were saving a service URL at that moment. The
+  same applies to any test setting `:incident_reopen_grace_seconds` or
+  `:dashboard_debounce_ms` — those live in modules that run their tests in order.
 - Monitor tests must be `async: false` with `set_mox_global`: the monitor and its
   probe tasks are separate processes, so they need the shared sandbox connection
   and a globally visible mock.

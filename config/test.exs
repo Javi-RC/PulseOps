@@ -64,9 +64,14 @@ config :pulse_ops, Oban, queues: false, plugins: false, testing: :manual
 # behaviour itself is covered by a test that sets its own window.
 config :pulse_ops, :incident_reopen_grace_seconds, 0
 
-# The dashboard reloads on the next message instead of after a timer, so tests
-# can render immediately after a broadcast. The coalescing itself is covered by
-# a test that sets its own window.
+# No debounce window, so the dashboard re-reads inside the broadcast callback and
+# a test can render immediately afterwards. Deferring by a message would land
+# behind a render call already queued. The coalescing itself is covered by a
+# test that sets its own window.
 config :pulse_ops, :dashboard_debounce_ms, 0
+
+# Fixtures use hosts that do not resolve, and the suite must not perform DNS
+# lookups. UrlGuard's own tests turn the check on explicitly.
+config :pulse_ops, :allow_private_targets, true
 
 config :pulse_ops, webhook_client: :stub
