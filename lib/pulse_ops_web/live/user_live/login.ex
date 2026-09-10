@@ -2,6 +2,8 @@ defmodule PulseOpsWeb.UserLive.Login do
   use PulseOpsWeb, :live_view
 
   alias PulseOps.Accounts
+  alias PulseOpsWeb.AuthThrottle
+  alias PulseOpsWeb.ClientIp
 
   @impl true
   def render(assigns) do
@@ -103,7 +105,11 @@ defmodule PulseOpsWeb.UserLive.Login do
 
     form = to_form(%{"email" => email}, as: "user")
 
-    {:ok, assign(socket, form: form, trigger_submit: false)}
+    # Connect info is only readable during mount, so the address is kept for the
+    # events that need it.
+    client_ip = ClientIp.from_x_headers(get_connect_info(socket, :x_headers))
+
+    {:ok, assign(socket, form: form, trigger_submit: false, client_ip: client_ip)}
   end
 
   @impl true
@@ -112,6 +118,19 @@ defmodule PulseOpsWeb.UserLive.Login do
   end
 
   def handle_event("submit_magic", %{"user" => %{"email" => email}}, socket) do
+    case AuthThrottle.hit(:magic_link, email, socket.assigns.client_ip) do
+      :ok ->
+        send_magic_link(socket, email)
+
+      denied ->
+        {:noreply,
+         socket
+         |> put_flash(:error, AuthThrottle.message(denied))
+         |> push_navigate(to: ~p"/users/log-in")}
+    end
+  end
+
+  defp send_magic_link(socket, email) do
     if user = Accounts.get_user_by_email(email) do
       Accounts.deliver_login_instructions(
         user,

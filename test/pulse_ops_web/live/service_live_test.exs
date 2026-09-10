@@ -214,17 +214,92 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       assert service.body_assertion == ~s("status":"ok")
     end
 
-    test "shows the stored headers back as text when editing", %{conn: conn, scope: scope} do
-      service =
-        service_fixture(scope, %{
-          request_headers: %{"X-Probe" => "pulseops", "Authorization" => "Bearer token"}
-        })
+    test "shows stored header names but never their values, and keeps them on save", %{
+      conn: conn,
+      scope: scope
+    } do
+      headers = %{"X-Probe" => "probe-value", "Authorization" => "Bearer a-recognisable-token"}
+      service = service_fixture(scope, %{request_headers: headers})
 
-      {:ok, _live, html} =
+      {:ok, live, html} =
         live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit")
 
+      # The form cannot know which header is a credential, so no value is shown.
       # Sorted, so editing does not reshuffle the lines under the cursor.
-      assert html =~ "Authorization: Bearer token\nX-Probe: pulseops"
+      refute html =~ "a-recognisable-token"
+      refute html =~ "probe-value"
+      assert html =~ "Authorization: ••••••\nX-Probe: ••••••"
+
+      {:ok, _live, _html} =
+        live
+        |> form("#service-form", service: %{name: "Renamed"})
+        |> render_submit()
+        |> follow_redirect(conn, services_path(scope))
+
+      assert Monitoring.get_service!(scope, service.id).request_headers == headers
+    end
+
+    test "replaces one header value and keeps the rest", %{conn: conn, scope: scope} do
+      service =
+        service_fixture(scope, %{
+          request_headers: %{"X-Probe" => "probe-value", "Authorization" => "Bearer old"}
+        })
+
+      {:ok, live, _html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit")
+
+      {:ok, _live, _html} =
+        live
+        |> form("#service-form",
+          service: %{request_headers_text: "Authorization: Bearer rotated\nX-Probe: ••••••"}
+        )
+        |> render_submit()
+        |> follow_redirect(conn, services_path(scope))
+
+      assert Monitoring.get_service!(scope, service.id).request_headers == %{
+               "Authorization" => "Bearer rotated",
+               "X-Probe" => "probe-value"
+             }
+    end
+
+    test "a value typed into a new service survives being masked on re-render", %{
+      conn: conn,
+      scope: scope
+    } do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      html =
+        live
+        |> form("#service-form",
+          service: Map.put(@create_attrs, :request_headers_text, "Authorization: Bearer typed")
+        )
+        |> render_change()
+
+      refute html =~ "Bearer typed"
+
+      {:ok, _live, _html} =
+        live
+        |> form("#service-form",
+          service: Map.put(@create_attrs, :request_headers_text, "Authorization: ••••••")
+        )
+        |> render_submit()
+        |> follow_redirect(conn, services_path(scope))
+
+      assert [service] = Monitoring.list_services(scope)
+      assert service.request_headers == %{"Authorization" => "Bearer typed"}
+    end
+
+    test "refuses a mask on a header with no value to keep", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      html =
+        live
+        |> form("#service-form",
+          service: Map.put(@create_attrs, :request_headers_text, "X-Never-Stored: ••••••")
+        )
+        |> render_change()
+
+      assert html =~ "printable ASCII"
     end
 
     test "reports a header the form could not make sense of", %{conn: conn, scope: scope} do

@@ -607,6 +607,30 @@ defmodule PulseOps.MonitoringTest do
       assert Enum.any?(errors_on(changeset).request_headers, &(&1 =~ "under 200 characters"))
     end
 
+    test "keeps headers encrypted in the database and out of inspect", %{scope: scope} do
+      headers = %{"authorization" => "Bearer a-recognisable-token"}
+      assert {:ok, service} = create(scope, %{request_headers: headers})
+
+      # ::text reads a jsonb column and a bytea column alike, so this fails on the
+      # plain-text schema for the right reason instead of on a type mismatch.
+      %{rows: [[stored]]} =
+        PulseOps.Repo.query!("SELECT request_headers::text FROM services WHERE id = $1", [
+          service.id
+        ])
+
+      refute stored =~ "a-recognisable-token"
+      assert Monitoring.get_service!(scope, service.id).request_headers == headers
+      refute inspect(service) =~ "a-recognisable-token"
+    end
+
+    test "rejects a header value that is not printable ASCII", %{scope: scope} do
+      # HTTP field values are ASCII. It also means the form's mask for a hidden
+      # value can never be sent as if it were one.
+      assert {:error, changeset} = create(scope, %{request_headers: %{"x-probe" => "café"}})
+
+      assert "a header value may only contain printable ASCII characters" in errors_on(changeset).request_headers
+    end
+
     test "rejects a status outside the HTTP range", %{scope: scope} do
       assert {:error, changeset} = create(scope, %{expected_status: 99})
       assert errors_on(changeset).expected_status != []

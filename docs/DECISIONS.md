@@ -585,6 +585,171 @@ does not flicker to "stopped".
 
 ---
 
+## ADR-018 — Webhook tokens are encrypted at rest under a key derived from `SECRET_KEY_BASE`
+
+**Decision.** `notifiers.secret_token` is stored as AES-256-GCM ciphertext
+(`PulseOps.Vault`, through the `Vault.EncryptedString` Ecto type), redacted from
+`inspect`, and never rendered back into a page. The key is derived with PBKDF2
+from a key base in the application environment, which in production is the
+`SECRET_KEY_BASE` the endpoint already requires.
+
+**Why not a hash.** An API token only has to be *recognised*, so `Api.Token`
+stores its hash and nothing else. A webhook token has to be *sent*, on every delivery, so
+PulseOps must be able to recover it. The choice is between plain text and
+reversible encryption, and plain text meant anyone with a database dump, a
+backup or a read replica held every receiver's credential.
+
+**Why derive from `SECRET_KEY_BASE` rather than a new variable.** It is already
+mandatory, already secret, and already has to be managed as such. A second
+variable would be one more thing a deployment can forget, for no gain in the
+threat this addresses — someone holding the database but not the application's
+environment. The domain reads it from its own config key, set from the same
+value, so `PulseOps` never reaches into `PulseOpsWeb` configuration.
+
+**Why GCM and a random IV.** Authenticated, so a tampered or foreign value is
+refused instead of decrypting into a different token. A fresh IV per value, so
+notifiers that share a token do not visibly share a ciphertext. A version byte
+leads the format, so a future format can tell rows apart without guessing.
+
+**Why the form never shows it.** A password input still carries a `value`
+attribute, and the core input fills it from the form, so the stored token sat in
+the page source of every edit screen. The field is now always empty; blank on
+save means "keep", and removing a token is a separate, explicit checkbox —
+otherwise saving any other change would silently delete it.
+
+**Rejected.** *Cloak.* A well-made library, but it brings a vault process, a
+cipher configuration and key tags for what is one field; the whole of
+`PulseOps.Vault` is shorter than the configuration it would replace.
+
+*pgcrypto.* The key would travel in SQL, where it lands in logs and
+`pg_stat_statements`.
+
+*Failing soft on a value that will not decrypt.* Reading it as nil would turn a
+changed key into webhooks failing later for no visible reason.
+
+**Consequence.** Rotating `SECRET_KEY_BASE` makes every stored token unreadable,
+and loading an affected notifier raises. After a rotation, each webhook's token
+has to be entered again; `config/runtime.exs` says so where the variable is read.
+There is no re-keying tool yet — it would be a small task if rotation becomes
+routine. The migration converts existing rows in Elixir, because the key must
+never appear in SQL, and therefore depends on `PulseOps.Vault`.
+
+**The same decision covers `services.request_headers`**, which is where an
+`Authorization` header for a check lives. The map is JSON-encoded and encrypted
+(`Vault.EncryptedMap`) and redacted. The service form shows header *names* with
+every value masked, because it cannot know which header is a credential; a line
+left masked keeps the value already known for that name, resolved in the
+LiveView's assigns and never sent to the page — including a value typed a moment
+ago and masked by a re-render. Header values must be printable ASCII, as HTTP
+requires, which also guarantees a mask with nothing behind it is refused rather
+than sent.
+
+---
+
+## ADR-019 — Sign-in attempts are limited per email, and per address only behind a trusted proxy
+
+**Decision.** Password logins, magic-link requests and registrations are limited
+per email, always, and per client address only when `TRUSTED_PROXY` says every
+request comes through a proxy that appends the address to `X-Forwarded-For`.
+The address is then the *rightmost* entry of that header. Counters are
+fixed-window, in an ETS table owned by `PulseOpsWeb.RateLimiter`.
+
+| Action | Per email | Per address |
+|---|---|---|
+| Password login (failures only) | 5 / 15 min | 50 / 15 min |
+| Magic-link request | 3 / 15 min | 20 / 15 min |
+| Registration | 3 / hour | 10 / hour |
+
+**Why not simply the peer address.** PulseOps is deployed behind a proxy that
+terminates TLS, so the peer is the proxy. A limit on it is one limit shared by
+everybody, and whoever trips it locks every user out — a rate limiter turned
+into a denial of service.
+
+**Why not `X-Forwarded-For` unconditionally.** The client writes that header.
+If the app is reachable around the proxy, or the proxy passes the header through
+unchanged, every attempt can claim a new address and the limit is decoration.
+Only the operator knows whether that is the case, so it is a setting, off by
+default. The rightmost entry is used because it is the one the proxy appended;
+anything to its left came from the client.
+
+**Why per email as well.** It needs no trust in the network: it stops one
+account being guessed at, and one inbox being flooded with magic links or
+confirmation emails by somebody typing it into a form. It is also all that
+applies without a trusted proxy.
+
+**Why password failures only, checked first.** A person who types their
+password correctly should never lock themselves out. The check happens before
+the password is verified, so a refused attempt runs no bcrypt — otherwise the
+limit would refuse the login but still spend the CPU at the attacker's rate.
+Magic links and registrations count every request, because every request can
+send an email.
+
+**Why fixed windows.** The purpose is to make guessing slow, not to meter
+precisely. A burst across a window boundary gets through at up to twice the
+limit, which does not change how long guessing takes. A sliding window would
+mean keeping timestamps per key for that.
+
+**Rejected.** *Hammer or PlugAttack.* Both would do, and both bring
+configuration and a backend abstraction for three counters on one node; the
+limiter is under a hundred lines.
+
+*A 429 status.* These are browser forms; the person needs the form back with a
+message, not an error page.
+
+**Consequence.** Counts live on one node and reset if the limiter process
+restarts — an acceptable failure towards letting people in, and consistent with
+PulseOps running as a single node until there is leader election. The refusal
+message is the same whether or not the email has an account, so the limit does
+not become a way to enumerate them. The LiveView socket now carries
+`:x_headers` in its connect info, which is how the login and registration pages
+see the proxy's header.
+
+---
+
+## ADR-020 — An incident's announcement is queued in its own transaction, and fanned out by a job
+
+**Decision.** Opening or resolving an incident inserts one
+`PulseOps.Incidents.EventJob` inside the same `Ecto.Multi` as the incident and
+its timeline event. That job, when it runs, decides everything that follows:
+which notifiers match, whether the service is flapping and gets a digest
+instead, whether a critical incident schedules an escalation.
+
+**Why.** All of that used to run after the commit, in the process that opened
+the incident — almost always a `ServiceMonitor`. Every transition to or from
+`:down` cost the monitor a service reload, a flap count over recent incidents, a
+notifier query, a bulk insert of delivery jobs and possibly an escalation
+insert, on the process whose job is to probe on time. Worse, it was not atomic:
+anything that stopped the process between the incident committing and the jobs
+being inserted — a crash, a deploy, a lost connection — left an incident that
+nobody was ever told about. A monitoring tool that silently drops the one
+notification that matters has failed at its purpose.
+
+**Why an Oban job in the transaction.** It is a transactional outbox without a
+new table: the job row commits with the incident or rolls back with it, and
+Oban is already what delivers, retries and prunes. The monitor's path gains one
+insert inside a transaction it was already running.
+
+**Rejected.** *A PubSub subscriber that enqueues on `{:incident_opened, _}`.*
+At-most-once: a subscriber that is restarting, or a node going down with the
+message in flight, loses the announcement — the failure this removes. It would
+also put every organization's fan-out behind one process.
+
+*Keeping the direct call and inserting the delivery jobs inside the Multi.* It
+fixes atomicity but keeps the notifier query, flap count and escalation logic on
+the monitor's path, and keeps `Incidents` knowing how notifications are routed.
+
+**Consequence.** The fan-out sees the world as of when the job runs, a moment
+later: a notifier created in between is included, and the flap count includes
+whatever else has happened by then — the same count a person looking at the
+timeline would make. If queuing the deliveries fails the job retries, and a
+retry after a partial fan-out can repeat a delivery; that requires the bulk
+insert of delivery jobs itself to report discarded rows, and a duplicate message
+is the better failure than none. `Incidents` still reads flap tuning from
+`Notifications`, which is configuration, not routing. Tests that assert on
+deliveries run the pending announcements first (`announce_incident_events/0`).
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

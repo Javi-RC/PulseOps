@@ -180,13 +180,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
 
     state = %{state | task: nil, timeout_ref: nil}
 
-    case record(state, outcome) do
-      {:ok, state} -> {:noreply, schedule_check(state, :regular)}
-      # The service is gone, so there is nothing left to probe. A normal stop
-      # does not count as an abnormal termination, so the supervisor leaves the
-      # monitor dead instead of restarting it into a boot-probe crash loop.
-      {:stop, state} -> {:stop, :normal, state}
-    end
+    finish_check(state, outcome)
   end
 
   # The probe process died without reporting. async_nolink means this reaches us
@@ -197,10 +191,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     outcome = {:error, %Result{error: "health check crashed: #{inspect(reason)}"}}
     state = %{state | task: nil, timeout_ref: nil}
 
-    case record(state, outcome) do
-      {:ok, state} -> {:noreply, schedule_check(state, :regular)}
-      {:stop, state} -> {:stop, :normal, state}
-    end
+    finish_check(state, outcome)
   end
 
   # The probe overran even its own timeout. Req should have given up already, so
@@ -212,10 +203,7 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
     outcome = {:error, %Result{error: "health check timed out"}}
     state = %{state | task: nil, timeout_ref: nil}
 
-    case record(state, outcome) do
-      {:ok, state} -> {:noreply, schedule_check(state, :regular)}
-      {:stop, state} -> {:stop, :normal, state}
-    end
+    finish_check(state, outcome)
   end
 
   # Late messages from a probe we already gave up on. The two-tuple clause also
@@ -267,6 +255,22 @@ defmodule PulseOps.Monitoring.ServiceMonitor do
   end
 
   ## State machine
+
+  # However a probe ended — it reported, its task crashed, or it overran the
+  # backstop — it ends the same way from here: recorded, then the next probe
+  # scheduled.
+  defp finish_check(state, outcome) do
+    case record(state, outcome) do
+      {:ok, state} ->
+        {:noreply, schedule_check(state, :regular)}
+
+      # The service is gone, so there is nothing left to probe. A normal stop
+      # does not count as an abnormal termination, so the supervisor leaves the
+      # monitor dead instead of restarting it into a boot-probe crash loop.
+      {:stop, state} ->
+        {:stop, :normal, state}
+    end
+  end
 
   defp record(state, outcome) do
     {result, healthy?} =

@@ -5,10 +5,12 @@ defmodule PulseOps.Notifications do
   A `Notifier` is a delivery channel — a webhook URL or, for email, the set of
   organization users it reaches. A notifier is optionally narrowed to one
   service; when narrowed, it only fires for that service's incidents. When an
-  incident opens or resolves, `PulseOps.Incidents` calls
+  incident opens or resolves, `PulseOps.Incidents` queues an
+  `Incidents.EventJob` in the same transaction; when that job runs it calls
   `enqueue_incident_notifications/3`, which queues one Oban job per matching
-  enabled notifier. Delivery happens off the monitor's path, so an unreachable
-  receiver never slows down the probes that spotted the incident.
+  enabled notifier. None of it happens on the monitor's path, so neither a slow
+  receiver nor the fan-out itself slows the probes that spotted the incident
+  (ADR-020).
 
   Notifiers are administrative configuration, so every write goes through
   `Organizations.authorize(scope, :manage_organization)` like alert rules.
@@ -123,9 +125,9 @@ defmodule PulseOps.Notifications do
   and either is not narrowed to a service or is narrowed to the incident's
   service.
 
-  Called from `PulseOps.Incidents` after the incident transaction commits, with
-  the event as `:opened` or `:resolved`. A receiver being slow never blocks the
-  caller: the job is just a row in `oban_jobs`, and Oban retries it.
+  Called by `PulseOps.Incidents.EventJob`, with the event as `:opened` or
+  `:resolved` — never on the path that opened or resolved the incident. Each
+  delivery is its own row in `oban_jobs`, so a slow receiver only delays itself.
   """
   def enqueue_incident_notifications(organization_id, incident, event)
       when event in [:opened, :resolved] do

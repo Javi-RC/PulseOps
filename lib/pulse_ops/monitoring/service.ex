@@ -10,6 +10,7 @@ defmodule PulseOps.Monitoring.Service do
 
   alias PulseOps.Monitoring.UrlGuard
   alias PulseOps.Organizations.Organization
+  alias PulseOps.Vault.EncryptedMap
 
   @environments [:production, :staging, :development]
   @statuses [:unknown, :healthy, :degraded, :down]
@@ -44,7 +45,9 @@ defmodule PulseOps.Monitoring.Service do
     field :enabled, :boolean, default: true
     field :public, :boolean, default: true
     field :http_method, Ecto.Enum, values: @http_methods, default: :get
-    field :request_headers, :map, default: %{}
+    # Often an Authorization header, so encrypted at rest and redacted like a
+    # webhook's token (ADR-018).
+    field :request_headers, EncryptedMap, default: %{}, redact: true
     field :request_body, :string
     field :expected_status, :integer
     field :body_assertion, :string
@@ -181,6 +184,13 @@ defmodule PulseOps.Monitoring.Service do
       Enum.any?(headers, &unsafe_header?/1) ->
         add_error(changeset, :request_headers, "a header cannot contain a line break")
 
+      Enum.any?(headers, fn {_name, value} -> not printable_ascii?(value) end) ->
+        add_error(
+          changeset,
+          :request_headers,
+          "a header value may only contain printable ASCII characters"
+        )
+
       Enum.any?(headers, fn {name, _value} -> not valid_header_name?(name) end) ->
         add_error(
           changeset,
@@ -202,6 +212,11 @@ defmodule PulseOps.Monitoring.Service do
     String.contains?(to_string(name), ["\r", "\n"]) or
       String.contains?(to_string(value), ["\r", "\n"])
   end
+
+  # RFC 9110 field values are visible ASCII, spaces and tabs. Anything else would
+  # be mangled or refused by the far side — and the service form's mask for a
+  # hidden value is not ASCII, so it can never be sent as if it were one.
+  defp printable_ascii?(value), do: Regex.match?(~r/^[\x20-\x7E\t]*$/, to_string(value))
 
   defp blank?(value), do: is_nil(value) or String.trim(to_string(value)) == ""
 

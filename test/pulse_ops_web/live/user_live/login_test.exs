@@ -41,6 +41,34 @@ defmodule PulseOpsWeb.UserLive.LoginTest do
 
       assert html =~ "If your email is in our system"
     end
+
+    test "stops sending links to one email after a few requests", %{conn: conn} do
+      user = user_fixture()
+
+      request_link = fn ->
+        {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+
+        {:ok, _lv, html} =
+          form(lv, "#login_form_magic", user: %{email: user.email})
+          |> render_submit()
+          |> follow_redirect(conn, ~p"/users/log-in")
+
+        html
+      end
+
+      for _request <- 1..3, do: assert(request_link.() =~ "If your email is in our system")
+
+      # Each link is an email in somebody's inbox, so a refused request must not
+      # send one either.
+      assert request_link.() =~ "Too many attempts"
+
+      login_tokens =
+        PulseOps.Accounts.UserToken
+        |> PulseOps.Repo.all()
+        |> Enum.count(&(&1.user_id == user.id and &1.context == "login"))
+
+      assert login_tokens == 3
+    end
   end
 
   describe "user login - password" do

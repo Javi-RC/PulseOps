@@ -35,6 +35,47 @@ defmodule PulseOps.NotificationsTest do
     end
   end
 
+  describe "a webhook's secret token" do
+    setup do
+      scope = organization_scope_fixture()
+      notifier = notifier_fixture(scope, %{secret_token: "a-recognisable-token"})
+      %{scope: scope, notifier: notifier}
+    end
+
+    test "is encrypted in the database and read back in the clear", %{
+      scope: scope,
+      notifier: notifier
+    } do
+      %{rows: [[stored]]} =
+        PulseOps.Repo.query!("SELECT secret_token FROM notifiers WHERE id = $1", [notifier.id])
+
+      refute stored =~ "a-recognisable-token"
+      assert Notifications.get_notifier(scope, notifier.id).secret_token == "a-recognisable-token"
+    end
+
+    test "does not appear when the notifier is inspected", %{notifier: notifier} do
+      refute inspect(notifier) =~ "a-recognisable-token"
+    end
+
+    test "is kept when an update leaves it blank", %{scope: scope, notifier: notifier} do
+      {:ok, _} = Notifications.update_notifier(scope, notifier, %{"secret_token" => ""})
+
+      assert PulseOps.Repo.reload!(notifier).secret_token == "a-recognisable-token"
+    end
+
+    test "is replaced when an update supplies a new one", %{scope: scope, notifier: notifier} do
+      {:ok, _} = Notifications.update_notifier(scope, notifier, %{"secret_token" => "rotated"})
+
+      assert PulseOps.Repo.reload!(notifier).secret_token == "rotated"
+    end
+
+    test "is removed only when asked to", %{scope: scope, notifier: notifier} do
+      {:ok, _} = Notifications.update_notifier(scope, notifier, %{"clear_secret_token" => "true"})
+
+      assert PulseOps.Repo.reload!(notifier).secret_token == nil
+    end
+  end
+
   describe "create_notifier/2" do
     test "creates a notifier owned by the scoped organization" do
       scope = organization_scope_fixture()
@@ -121,6 +162,7 @@ defmodule PulseOps.NotificationsTest do
       notifier_fixture(scope, %{enabled: false})
 
       {:ok, incident} = open_incident(scope)
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(webhook, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(email, incident, "opened"))
@@ -136,6 +178,7 @@ defmodule PulseOps.NotificationsTest do
       org_wide = notifier_fixture(scope)
 
       {:ok, incident} = Incidents.open_incident(service, AlertRule.default())
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(targeted, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(org_wide, incident, "opened"))
@@ -169,6 +212,7 @@ defmodule PulseOps.NotificationsTest do
 
       {:ok, incident} = Incidents.open_incident(service, AlertRule.default())
       {:ok, _resolved} = Incidents.resolve_open_incident(service)
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "resolved"))
@@ -208,6 +252,7 @@ defmodule PulseOps.NotificationsTest do
 
       # The suppression is not a second rule about notifications: no incident
       # opened, so there was nothing to announce.
+      announce_incident_events()
       refute_enqueued(worker: NotifyJob)
     end
 
@@ -223,6 +268,7 @@ defmodule PulseOps.NotificationsTest do
         })
 
       assert {:ok, incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "opened"))
     end
@@ -242,6 +288,7 @@ defmodule PulseOps.NotificationsTest do
         })
 
       {:ok, _resolved} = Incidents.resolve_open_incident(service)
+      announce_incident_events()
 
       # Telling people something recovered is not a page in the night, and
       # leaving it out would make the timeline lie.

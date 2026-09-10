@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability, and F10 fixed (v0.6.0) |
-| Next | No numbered phase left — the remaining debt, quick wins and star features in [`ROADMAP.md`](ROADMAP.md) |
-| Checks | `mix check` green: 729 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/tech-debt` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
+| Next | "Can wait" technical debt complete — open the `feature/tech-debt` PR to `develop` |
+| Checks | `mix check` green: 777 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -955,6 +955,158 @@ kept the same pid under the same `MonitorSupervisor` and recorded a healthy prob
 afterwards; editing the given-up service watched it again. Needing that second
 service to stay *healthy* is what exposed `/dev/flaky` answering 401 — fixed in
 the commit before this one.
+
+### Technical debt — webhook secret tokens
+
+- **Encrypted at rest** (ADR-018). `PulseOps.Vault` is AES-256-GCM with a random
+  IV and a version byte, keyed from `SECRET_KEY_BASE` through its own config key.
+  `Notifier.secret_token` is a `Vault.EncryptedString` with `redact: true`, so it
+  is ciphertext in the table and absent from `inspect` and logs.
+- **Never rendered.** The edit form used to put the stored token in the password
+  field's `value` — visible in the page source. It is now always empty, says a
+  token is set, treats blank as "keep", and removing the token is a checkbox.
+- **The migration converts existing rows** in Elixir and rolls back to plain
+  text.
+- `services.request_headers` has the same exposure and is now its own debt row.
+
+**Verified by tests first.** Twelve new tests failed against the old code for
+the reason each names — plain text in the column, the token in the edit page, in
+`inspect`, a blank save deleting it — and pass now.
+
+**Verified against the development database:** a plain-text token inserted
+before migrating came out as `bytea` with no trace of the plain text, the app
+read it back decrypted, rolling back restored the plain text as `varchar`, and
+migrating again re-encrypted it.
+
+### Technical debt — service request headers
+
+- **Encrypted at rest** under the same vault (ADR-018): `request_headers` is a
+  `Vault.EncryptedMap`, JSON inside the ciphertext, redacted from `inspect`. The
+  migration converts every row, empty maps included, because the column stays
+  `NOT NULL` and no database default can be a ciphertext.
+- **Values are never rendered.** The textarea shows `Name: ••••••` for every
+  header — the form cannot tell a credential from `X-Probe`. A masked line keeps
+  the value already known for that name; typing replaces it; deleting the line
+  removes the header.
+- **Known values live in the socket.** A value typed into a new service is
+  masked by the next re-render, so the LiveView keeps what was typed in its
+  assigns and resolves the mask against it on save. Without that, touching any
+  other field after typing a header would have lost the header.
+- **Header values must be printable ASCII**, as HTTP requires. It is also what
+  makes a mask with nothing behind it — a renamed header — an error instead of
+  six bullets sent to the far side.
+
+**Verified by tests first.** Six tests failed against the old code, one of them
+the existing test that asserted the leak ("shows the stored headers back as
+text"), now rewritten to assert the opposite.
+
+**Verified against the development database:** a service inserted with a
+plain-text `Authorization` header in `jsonb` came out as `bytea` with no trace of
+it, every existing service row was converted, the app read the header back
+decrypted and hidden from `inspect`, rolling back restored the original `jsonb`,
+and migrating again re-encrypted it.
+
+### Technical debt — rate limiting sign-in
+
+- **Per email, always; per address behind a trusted proxy** (ADR-019). Password
+  logins (5 failures / 15 min per email, 50 per address), magic-link requests
+  (3 / 20) and registrations (3 / 10 per hour). The address is believed only
+  with `TRUSTED_PROXY` set, and then only the rightmost `X-Forwarded-For` entry
+  — the peer is the TLS-terminating proxy, and the rest of the header is
+  whatever the client wrote.
+- **Password attempts count only when they fail, and are checked before
+  bcrypt**, so a refused attempt costs nothing and a correct password never
+  locks anyone out.
+- **A refused magic-link request sends no email**, and the message is the same
+  whether or not the account exists.
+- `PulseOpsWeb.RateLimiter` is fixed-window counters in a public ETS table with
+  atomic `update_counter/4`, swept every minute. The LiveView socket now carries
+  `:x_headers`, which is how the login and registration pages see the proxy's
+  header.
+
+**Verified by tests first.** Sixteen tests failed against the old code — the
+limiter and address modules did not exist, and none of the three flows refused
+anything. The per-address tests are their own non-async module: the setting is
+application env, and every other request in the suite comes from 127.0.0.1.
+
+**Verified against the running app** with `priv/scenarios/sign_in_throttle.exs`,
+over real HTTP — the login page's CSRF token, the session cookie, the form post:
+five wrong passwords, then the right one refused with "Too many attempts" while
+another account signed in; 51 emails from one spoofed `X-Forwarded-For` all
+still tried without a trusted proxy; and with one, the 51st attempt from a
+single address refused even with a correct password, while the same account
+signed in from elsewhere.
+
+### Technical debt — one way for a probe to end
+
+- `ServiceMonitor` handled a probe that reported, a probe whose task crashed, and
+  a probe that overran its backstop with three copies of the same `case` over
+  `record/2`. They now all go through `finish_check/2`, so the rule "record it,
+  then schedule the next one or stop because the service is gone" is written
+  once. A pure refactor: the existing tests for all three paths, and for a
+  service deleted under a running monitor, are what hold it in place.
+
+### Technical debt — the domain no longer reaches into the web layer
+
+- `WebhookSender` and `IncidentNotifier` built incident links from
+  `PulseOpsWeb.Endpoint.url()`, so `PulseOps` depended on `PulseOpsWeb`. They
+  now call `PulseOps.Links.incident_url/1`, which reads `:public_url` from the
+  domain's own config; production sets it from `PHX_HOST`, the same variable the
+  endpoint's URL comes from.
+- **A boundary test keeps it that way.** `PulseOps.BoundaryTest` reads every file
+  under `lib/pulse_ops` and fails on any mention of `PulseOpsWeb` outside
+  `application.ex`, naming the file and line. It failed first on exactly the two
+  offenders; the roadmap had only listed one of them.
+
+### Technical debt — notifications leave the monitor's path
+
+- **One announcement, inside the incident's transaction** (ADR-020). Opening an
+  incident, resolving it on recovery and resolving it by hand each insert an
+  `Incidents.EventJob` in the same `Ecto.Multi`. The job does what `Incidents`
+  used to do after the commit, in the monitor: match notifiers, check for
+  flapping, schedule an escalation.
+- **It fixes a lost-notification window, not only latency.** The old call ran
+  after the commit, so a monitor that crashed or a node that went down in
+  between left an incident nobody was told about. The announcement now commits
+  with the incident or not at all.
+- **Tests run announcements explicitly.** `announce_incident_events/0` performs
+  the pending `EventJob`s the way the queue would and deletes them. The flapping
+  tests call it after every open and every resolve, because flap detection
+  counts what has happened by the time the job runs — batching them at the end
+  would have made the first crossings look like flapping too.
+
+**Verified by tests first.** Five new tests failed against the old code — no
+announcement was queued, and opening an incident queued deliveries directly on
+the caller's path.
+
+**Verified against the running app** with `priv/scenarios/flapping_and_escalation.exs`
+and a live queue. Its first run after the change failed twice, and not because
+of a bug: it read the queue straight after opening an incident, which only
+worked while the fan-out ran inline. It now waits for what the announcement
+leads to, and counts deliveries in any state because the live queue may already
+be running them. With that, every step passed: the first line told and the
+escalation-only channel quiet, one digest for eight crossings, an escalation
+scheduled for a critical incident and delivered to the second line, and nothing
+more once it was acknowledged.
+
+### Technical debt — the Bootstrapper reads services in pages
+
+- `Bootstrapper` loaded every enabled service in one query and held all the rows
+  while it started their monitors, in a process that then sits idle and is never
+  collected. It now walks them in keyset pages of 500
+  (`Monitoring.list_enabled_services/1`, `after` + `limit`, ordered by id), and
+  stops at the first short page without an extra query.
+- Keyset rather than offset: every page is an index range scan, and a service
+  created mid-walk cannot shift a page and be started twice or skipped.
+- `Bootstrapper.start_monitors/1` is the walk itself, returning how many monitors
+  it started, so it is testable without restarting the application. It had no
+  tests before; three failed first against the old code.
+
+**Verified against the running app:** booting against the development database,
+which has 10 enabled services, logged "started 10 service monitors".
+
+With this, every "Can wait" item in `ROADMAP.md` is either fixed or recorded as
+already done.
 
 ## Next steps
 

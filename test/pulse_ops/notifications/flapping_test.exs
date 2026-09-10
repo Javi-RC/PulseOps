@@ -32,7 +32,9 @@ defmodule PulseOps.Notifications.FlappingTest do
   defp oscillate(service, times) do
     for _ <- 1..times do
       {:ok, _incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+      announce_incident_events()
       {:ok, _resolved} = Incidents.resolve_open_incident(service)
+      announce_incident_events()
     end
   end
 
@@ -77,6 +79,7 @@ defmodule PulseOps.Notifications.FlappingTest do
 
       # The third makes it a flapper, and from here the storm becomes a digest.
       {:ok, _incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+      announce_incident_events()
 
       assert_enqueued(worker: DigestJob, args: %{"service_id" => service.id})
     end
@@ -108,6 +111,7 @@ defmodule PulseOps.Notifications.FlappingTest do
       before = length(all_enqueued(worker: NotifyJob))
 
       {:ok, _incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+      announce_incident_events()
 
       assert length(all_enqueued(worker: NotifyJob)) == before
     end

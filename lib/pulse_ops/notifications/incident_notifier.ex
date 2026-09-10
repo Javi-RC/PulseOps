@@ -12,6 +12,7 @@ defmodule PulseOps.Notifications.IncidentNotifier do
   import Swoosh.Email
 
   alias PulseOps.Incidents.Incident
+  alias PulseOps.Links
   alias PulseOps.Notifications.Mailer
   alias PulseOps.Notifications.Notifier
 
@@ -76,10 +77,11 @@ defmodule PulseOps.Notifications.IncidentNotifier do
   defp append_cause(%Incident{cause: nil}), do: ""
   defp append_cause(%Incident{cause: cause}), do: "Cause: #{cause}"
 
-  defp append_url(%Incident{organization: nil}), do: ""
-
-  defp append_url(%Incident{organization: %{slug: slug}} = incident) do
-    "Link: " <> PulseOpsWeb.Endpoint.url() <> "/orgs/#{slug}/incidents/#{incident.id}"
+  defp append_url(%Incident{} = incident) do
+    case Links.incident_url(incident) do
+      nil -> ""
+      url -> "Link: " <> url
+    end
   end
 
   defp format(datetime), do: DateTime.to_iso8601(datetime)

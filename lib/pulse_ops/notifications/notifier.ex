@@ -32,6 +32,7 @@ defmodule PulseOps.Notifications.Notifier do
   alias PulseOps.Notifications.NotifierAssignment
   alias PulseOps.Organizations.Organization
   alias PulseOps.Repo
+  alias PulseOps.Vault.EncryptedString
 
   @types [:webhook, :email]
 
@@ -43,7 +44,10 @@ defmodule PulseOps.Notifications.Notifier do
     field :enabled, :boolean, default: true
     field :escalation_only, :boolean, default: false
     field :url, :string
-    field :secret_token, :string
+    # Encrypted at rest and redacted from inspect (ADR-018). It cannot be hashed
+    # like an API token: it has to be sent, not just recognised.
+    field :secret_token, EncryptedString, redact: true
+    field :clear_secret_token, :boolean, virtual: true, default: false
     field :assignee_ids, {:array, :integer}, virtual: true
 
     belongs_to :organization, Organization
@@ -72,16 +76,18 @@ defmodule PulseOps.Notifications.Notifier do
   """
   def changeset(notifier, attrs, %Scope{} = scope) do
     notifier
-    |> cast(attrs, [
+    |> cast(drop_blank_secret_token(attrs), [
       :name,
       :type,
       :enabled,
       :escalation_only,
       :url,
       :secret_token,
+      :clear_secret_token,
       :service_id,
       :assignee_ids
     ])
+    |> clear_secret_token_if_asked()
     |> validate_required([:name, :type])
     |> validate_inclusion(:type, @types)
     |> put_change(:organization_id, scope.organization.id)
@@ -90,6 +96,25 @@ defmodule PulseOps.Notifications.Notifier do
     |> normalize_service_id()
     |> foreign_key_constraint(:organization_id)
     |> foreign_key_constraint(:service_id)
+  end
+
+  # The form never shows the stored token, so its field is always empty and a
+  # blank submission means "leave it alone". Without this, saving any change to
+  # a webhook would quietly delete its token.
+  defp drop_blank_secret_token(attrs) do
+    Map.reject(attrs, fn {key, value} ->
+      key in [:secret_token, "secret_token"] and value in [nil, ""]
+    end)
+  end
+
+  # Removing a token is therefore its own explicit choice, and it wins over a
+  # token typed in the same submission.
+  defp clear_secret_token_if_asked(changeset) do
+    if get_change(changeset, :clear_secret_token) do
+      put_change(changeset, :secret_token, nil)
+    else
+      changeset
+    end
   end
 
   defp validate_destinations(changeset) do
