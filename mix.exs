@@ -4,7 +4,7 @@ defmodule PulseOps.MixProject do
   def project do
     [
       app: :pulse_ops,
-      version: "0.5.0",
+      version: "0.6.0",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       test_ignore_filters: [&String.starts_with?(&1, "test/support/")],

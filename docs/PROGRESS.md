@@ -7,9 +7,9 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/per-service-supervision` |
-| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability, and F10 fixed |
-| Next | Release Phase 4 as `v0.6.0` |
+| Branch | `main` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability, and F10 fixed (v0.6.0) |
+| Next | No numbered phase left — the remaining debt, quick wins and star features in [`ROADMAP.md`](ROADMAP.md) |
 | Checks | `mix check` green: 729 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
