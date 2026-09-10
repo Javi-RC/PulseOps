@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/tech-debt` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
-| Next | The rest of "Can wait": `Endpoint.url()` in the domain, notification enqueue off the monitor's path, then the Bootstrapper |
-| Checks | `mix check` green: 766 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | The rest of "Can wait": notification enqueue off the monitor's path, then the Bootstrapper |
+| Checks | `mix check` green: 769 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -1045,6 +1045,18 @@ signed in from elsewhere.
   then schedule the next one or stop because the service is gone" is written
   once. A pure refactor: the existing tests for all three paths, and for a
   service deleted under a running monitor, are what hold it in place.
+
+### Technical debt — the domain no longer reaches into the web layer
+
+- `WebhookSender` and `IncidentNotifier` built incident links from
+  `PulseOpsWeb.Endpoint.url()`, so `PulseOps` depended on `PulseOpsWeb`. They
+  now call `PulseOps.Links.incident_url/1`, which reads `:public_url` from the
+  domain's own config; production sets it from `PHX_HOST`, the same variable the
+  endpoint's URL comes from.
+- **A boundary test keeps it that way.** `PulseOps.BoundaryTest` reads every file
+  under `lib/pulse_ops` and fails on any mention of `PulseOpsWeb` outside
+  `application.ex`, naming the file and line. It failed first on exactly the two
+  offenders; the roadmap had only listed one of them.
 
 ## Next steps
 

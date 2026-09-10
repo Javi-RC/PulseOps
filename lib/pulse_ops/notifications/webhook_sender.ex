@@ -19,6 +19,7 @@ defmodule PulseOps.Notifications.WebhookSender do
   """
 
   alias PulseOps.Incidents.Incident
+  alias PulseOps.Links
   alias PulseOps.Monitoring.UrlGuard
   alias PulseOps.Notifications.Notifier
 
@@ -136,7 +137,7 @@ defmodule PulseOps.Notifications.WebhookSender do
       "resolved_at" => iso(incident.resolved_at),
       "cause" => incident.cause,
       "duration_seconds" => Incident.duration_seconds(incident),
-      "url" => incident_url(incident)
+      "url" => Links.incident_url(incident)
     }
   end
 
@@ -159,12 +160,6 @@ defmodule PulseOps.Notifications.WebhookSender do
       "name" => organization.name,
       "slug" => organization.slug
     }
-  end
-
-  defp incident_url(%Incident{organization: nil}), do: nil
-
-  defp incident_url(%Incident{organization: %{slug: slug}} = incident) do
-    PulseOpsWeb.Endpoint.url() <> "/orgs/#{slug}/incidents/#{incident.id}"
   end
 
   defp iso(nil), do: nil

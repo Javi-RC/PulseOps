@@ -144,6 +144,12 @@ config :pulse_ops, :allow_private_targets, false
 # TRUSTED_PROXY.
 config :pulse_ops, :trusted_proxy, false
 
+# Where this installation is reached, for the links the domain hands out in
+# webhook payloads and emails (PulseOps.Links). Kept apart from the endpoint's
+# URL so the domain never reads web configuration; production derives both from
+# PHX_HOST.
+config :pulse_ops, :public_url, "http://localhost:4000"
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

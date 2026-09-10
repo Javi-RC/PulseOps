@@ -153,6 +153,10 @@ if config_env() == :prod do
   # them unreadable: re-enter each webhook's token after a rotation.
   config :pulse_ops, PulseOps.Vault, secret_key_base: secret_key_base
 
+  # The same address as the endpoint's url above, for the links the domain puts
+  # into webhook payloads and emails without a request to build them from.
+  config :pulse_ops, :public_url, "https://#{host}"
+
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key
