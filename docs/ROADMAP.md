@@ -208,6 +208,13 @@ and a crash at boot repeats on every restart.
 Files: `lib/pulse_ops/monitoring/monitor_supervisor.ex`,
 `lib/pulse_ops/monitoring/supervisor.ex`
 
+**Fixed** by giving each monitor its own supervisor, `MonitorContainer`, with the
+restart budget the shared one only claimed to have; containers are temporary, so
+a service that exceeds its budget stays down on its own (ADR-017). The regression
+test kills one monitor six times and asserts the other monitor is the same
+process under the same `MonitorSupervisor` — run against the old supervisor, it
+fails with the other monitor gone.
+
 ---
 
 ## Technical debt
@@ -299,6 +306,8 @@ Behave like an actual on-call tool.
       pagination, monitor-health visibility — the delete confirmation already
       existed by the time this was picked up; it is now pinned by a test.
       Building monitor-health visibility is what surfaced **F10**.
+- [x] **F10** A restart budget per service: one crash-looping monitor no longer
+      takes every other monitor down
 
 ---
 

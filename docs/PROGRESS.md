@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/ux-polish` |
-| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability |
-| Next | **F10** — one crash-looping monitor takes every monitor down (found in this phase, open) |
-| Checks | `mix check` green: 725 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/per-service-supervision` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability, and F10 fixed |
+| Next | Release Phase 4 as `v0.6.0` |
+| Checks | `mix check` green: 729 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -920,6 +920,41 @@ and RFC 5280's two-digit-year pivot at 2049) is covered directly.
   times and found a second, healthy service unwatched afterwards. **Not fixed
   here**: it is a change to the supervision design. It is recorded as F10 in
   `ROADMAP.md`, and `ARCHITECTURE.md` — which claimed the opposite — is corrected.
+  Fixed in its own commit, next section.
+
+### Stabilisation — F10: a restart budget per service
+
+- **Each monitor has a supervisor of its own** (ADR-017). `MonitorSupervisor`
+  starts one `MonitorContainer` per service as a temporary child; the container
+  supervises that service's `ServiceMonitor` with `max_restarts: 5,
+  max_seconds: 60`. Those were always the right numbers — they were attached to
+  the supervisor every monitor shared, so they were a budget for all of them
+  together.
+- **A container that gives up stays down.** Being temporary, it is never
+  restarted and never counted against `MonitorSupervisor`. The service reads as
+  "Nothing is watching this service" until it is edited.
+- **A monitor that stops normally takes its container with it.** It is a
+  significant child and the container has `auto_shutdown: :any_significant`, so
+  a deleted service does not leave an empty container holding its name.
+- **"Watched" means a container exists**, not a monitor. A monitor restarting
+  inside its budget is briefly unregistered, and the service page should not
+  flicker to "stopped" for that.
+
+**Verified by tests, including against the bug.** The regression test kills one
+service's monitor five times (each restarted), then a sixth (given up on), and
+asserts the other service's monitor is the *same pid* under the *same*
+`MonitorSupervisor`. With `MonitorSupervisor` temporarily put back to starting
+monitors directly under a shared 5/60 budget, it failed with the other monitor
+gone — which is F10. The first version of the test did not fail that way; see
+the trap below.
+
+**Verified against the running app** with `priv/scenarios/f10_isolation.exs`:
+two real services probing `/dev/flaky`, one monitor killed five times (restarted
+each time) and a sixth (given up on, reported "not watched"), while the other
+kept the same pid under the same `MonitorSupervisor` and recorded a healthy probe
+afterwards; editing the given-up service watched it again. Needing that second
+service to stay *healthy* is what exposed `/dev/flaky` answering 401 — fixed in
+the commit before this one.
 
 ## Next steps
 
@@ -984,6 +1019,16 @@ unique index (ADR-004) is already what makes the clustering step safe.
   about monitors. Start the monitor explicitly, `assert_receive` its
   `{:check_recorded, _}`, then make a `ServiceMonitor.status/1` call to be sure
   the callback returned, and only then stop it.
+- **A regression test that reads the fix's own structure cannot catch the bug.**
+  The first F10 test decided "given up" by the container being absent. Against
+  the old code there were no containers at all, so it concluded "given up" after
+  the first kill, stopped, and passed with the bystander untouched. Waiting only
+  on things both versions have — the monitor's own name — and killing exactly six
+  times is what made it fail against the bug. Run the test against the unfixed
+  code before trusting it.
+- **`GenServer.stop/2` returning does not mean the name is free.** The registry
+  drops the entry when it handles the `:DOWN`, so `ServiceMonitor.whereis/1` can
+  still return the dead pid for a moment afterwards.
 - **A private helper called `path/3` is not called inside HEEx.** The
   verified-routes import defines `path/3`, and in a template the import wins, so
   the compiler reported a `~p` error about an argument the helper never had.

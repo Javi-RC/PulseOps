@@ -534,6 +534,57 @@ lives in `TlsCheck.Certificate`, which is pure and tested directly.
 
 ---
 
+## ADR-017 — Every monitor gets a supervisor of its own
+
+**Decision.** `MonitorSupervisor` no longer supervises monitors. It starts one
+`MonitorContainer` per service — a plain `Supervisor` whose only child is that
+service's `ServiceMonitor` — as a `:temporary` child. The container carries the
+restart budget, `max_restarts: 5, max_seconds: 60`. `MonitorSupervisor` has no
+budget of its own to speak of, because it never restarts anything.
+
+**Why.** Restart intensity is a property of a supervisor, not of a child. The old
+`DynamicSupervisor` had `max_restarts: 5, max_seconds: 60`, which reads as "give
+up on a monitor after five crashes" and meant "give up on *all* of them after
+five crashes between them". A sixth crash of one monitor in a minute terminated
+the supervisor and every monitor in every organization, and `Bootstrapper` does
+not run twice, so nothing came back until the application restarted (F10). The
+numbers were right; they were attached to the wrong process.
+
+**Why temporary containers.** A container that exceeds its budget exits. If
+`MonitorSupervisor` restarted it, that restart would be counted against
+`MonitorSupervisor` — the shared budget again, one level up, and a service with a
+crash at boot would still eventually take everything down. A temporary child is
+never restarted, so it is never counted. The service is left unwatched, and it
+says so: `Monitoring.monitor_state/1` reports `:stopped`, and the service page
+shows "Nothing is watching this service". Editing the service restarts it.
+
+**Why the monitor is significant.** A monitor stops *normally* when its service
+row disappears under it. The container would otherwise live on empty, holding the
+service's name in the registry. `auto_shutdown: :any_significant` makes that
+normal exit shut the container down too.
+
+**Rejected.** *Raising `max_restarts` on the shared supervisor.* Moves the cliff
+instead of removing it; with enough services, crashes across all of them add up
+to any number.
+
+*Counting crashes inside `ServiceMonitor` and stopping itself.* Re-implements
+supervision by hand, and cannot count a crash that kills the process before it
+has written anything down.
+
+*A `:one_for_one` supervisor with `restart: :temporary` monitors and a separate
+process watching for their `:DOWN` to restart them with a backoff.* It would add
+backoff, which a container does not have, but it is a supervisor built by hand
+next to one that already exists. Worth revisiting if a service that crashes at
+boot should be retried after a minute rather than left until it is edited.
+
+**Consequence.** Two processes per service instead of one, which at the scale of
+a monitor per service is nothing. `stop_monitor/1` terminates the container and
+waits for both registry names to be released. "Is this service watched?" asks
+about the container, so a monitor in the middle of a restart inside its budget
+does not flicker to "stopped".
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

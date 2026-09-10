@@ -32,30 +32,35 @@ PulseOps.Application
 ├── PulseOps.Monitoring.Supervisor        (:one_for_one)
 │   ├── Registry                          (:unique — locates a monitor by service id)
 │   ├── Task.Supervisor                   (runs the HTTP requests)
-│   ├── MonitorSupervisor                 (DynamicSupervisor — one child per service)
+│   ├── MonitorSupervisor                 (DynamicSupervisor — one temporary container per service)
+│   │   └── MonitorContainer              (Supervisor — this service's own restart budget)
+│   │       └── ServiceMonitor            (transient, significant)
 │   └── Bootstrapper                      (starts a monitor per enabled service at boot)
 ├── Oban                                  (job queue — cron hourly rollups and nightly retention, incident notification deliveries)
 └── PulseOpsWeb.Endpoint
 ```
 
 Each `ServiceMonitor` is registered as `{:via, Registry, {PulseOps.Monitoring.Registry,
-{:monitor, service_id}}}`, so it can be found, restarted or stopped by service id.
+{:monitor, service_id}}}`, and its container as `{:container, service_id}`, so
+both can be found, restarted or stopped by service id.
 
-Monitors are `restart: :transient` under a `DynamicSupervisor` with bounded
-`max_restarts`. **That bound does not isolate one monitor from another, and this
-section used to claim it did.** `max_restarts: 5, max_seconds: 60` is the
-intensity of the whole `DynamicSupervisor`, not a budget per child: one monitor
-crashing six times inside a minute exceeds it, and the supervisor terminates
-itself with every monitor under it. `Monitoring.Supervisor` restarts it empty,
-and `Bootstrapper` — which did not crash — does not run again, so every service
-goes unwatched until the application restarts. Verified by killing one service's
-monitor seven times: the other service's monitor was gone afterwards. This is
-open; see F10 in `ROADMAP.md`.
+**Restart budgets are per service** (ADR-017). Restart intensity belongs to a
+supervisor, not to a child, so a budget shared by every monitor is not a budget
+per monitor: before F10 was fixed, one monitor crashing six times in a minute
+terminated the shared `DynamicSupervisor` with every monitor under it, and
+nothing started them again. Each monitor now sits alone in a `MonitorContainer`
+with `max_restarts: 5, max_seconds: 60`. When a monitor exceeds that, only its
+container exits. Containers are `:temporary` under `MonitorSupervisor`, so a
+container that gave up stays down and is never counted against the shared
+supervisor. The monitor is a *significant* child with `auto_shutdown:
+:any_significant`, so a monitor that stops normally — its service row is gone —
+takes its container with it rather than leaving an empty one holding the name.
 
-What is in place is that the failure is no longer invisible. An enabled service
-whose monitor is not running says "Nothing is watching this service" on its page
+A service that has been given up on is not silent. An enabled service with no
+container says "Nothing is watching this service" on its page
 (`Monitoring.monitor_state/1`), instead of showing its last recorded status as
-though it were current.
+though it were current. The state is read from the container, not the monitor,
+so a monitor that is mid-restart inside its budget still counts as watched.
 
 A monitor reads its alert rule at boot, and the context casts to every monitor
 whose rule changed so each re-reads it in its own process — the new thresholds
