@@ -168,10 +168,25 @@ defmodule PulseOps.Monitoring do
   # caller whose permissions could be checked.
 
   @doc """
-  Every enabled service across all organizations, for the bootstrapper.
+  Enabled services across all organizations, one page at a time, for the
+  bootstrapper: those with an id greater than `:after`, in id order, at most
+  `:limit` of them.
+
+  Keyed on id rather than offset, so every page is an index range scan however
+  far into the table it is, and a service created while the walk is under way
+  cannot shift a page and make one be started twice or skipped.
   """
-  def list_enabled_services do
-    Repo.all(from s in Service, where: s.enabled == true)
+  @spec list_enabled_services(keyword()) :: [Service.t()]
+  def list_enabled_services(opts) do
+    after_id = Keyword.fetch!(opts, :after)
+    limit = Keyword.fetch!(opts, :limit)
+
+    Repo.all(
+      from s in Service,
+        where: s.enabled == true and s.id > ^after_id,
+        order_by: [asc: s.id],
+        limit: ^limit
+    )
   end
 
   @doc """

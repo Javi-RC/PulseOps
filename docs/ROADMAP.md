@@ -244,7 +244,7 @@ fails with the other monitor gone.
 | ~~`Service.request_headers` stored in plaintext — an `Authorization` header set on a check is readable in the table and rendered back into the service form~~ — **fixed**: encrypted, redacted, values masked in the form (ADR-018) | Secret exposure | Medium | Low | P2 |
 | ~~StreamData declared in `mix.exs` and used nowhere~~ — **done**: property tests for the status machine and `UrlGuard` | Missed testing opportunity | Low | Medium | P2 |
 | ~~No rate limiting on login/registration~~ — **fixed**: per email always, per address behind a trusted proxy (ADR-019) | Brute force | Medium | Low | P2 |
-| `Bootstrapper` loads every enabled service into memory at once | Memory at boot, at scale | Low | Low | P3 |
+| ~~`Bootstrapper` loads every enabled service into memory at once~~ — **fixed**: keyset pages of 500 | Memory at boot, at scale | Low | Low | P3 |
 | ~~`mix.exs` says `0.2.0` while `v0.3.0` is tagged; stray empty `.github;W` dir; 7 MB untracked `erl_crash.dump`~~ — **done** in the Phase 1 housekeeping | Noise | None | Trivial | P3 |
 
 ---

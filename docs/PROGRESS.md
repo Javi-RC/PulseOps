@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/tech-debt` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
-| Next | The last "Can wait" item: the Bootstrapper loading every enabled service at once (P3) |
-| Checks | `mix check` green: 774 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | "Can wait" technical debt complete — open the `feature/tech-debt` PR to `develop` |
+| Checks | `mix check` green: 777 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -1088,6 +1088,25 @@ be running them. With that, every step passed: the first line told and the
 escalation-only channel quiet, one digest for eight crossings, an escalation
 scheduled for a critical incident and delivered to the second line, and nothing
 more once it was acknowledged.
+
+### Technical debt — the Bootstrapper reads services in pages
+
+- `Bootstrapper` loaded every enabled service in one query and held all the rows
+  while it started their monitors, in a process that then sits idle and is never
+  collected. It now walks them in keyset pages of 500
+  (`Monitoring.list_enabled_services/1`, `after` + `limit`, ordered by id), and
+  stops at the first short page without an extra query.
+- Keyset rather than offset: every page is an index range scan, and a service
+  created mid-walk cannot shift a page and be started twice or skipped.
+- `Bootstrapper.start_monitors/1` is the walk itself, returning how many monitors
+  it started, so it is testable without restarting the application. It had no
+  tests before; three failed first against the old code.
+
+**Verified against the running app:** booting against the development database,
+which has 10 enabled services, logged "started 10 service monitors".
+
+With this, every "Can wait" item in `ROADMAP.md` is either fixed or recorded as
+already done.
 
 ## Next steps
 
