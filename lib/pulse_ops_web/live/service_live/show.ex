@@ -19,6 +19,12 @@ defmodule PulseOpsWeb.ServiceLive.Show do
 
   @chart_points 60
 
+  # The windows the figures can be read over. Thirty days used to be out of the
+  # question — it meant aggregating a month of raw checks per page view — and is
+  # cheap now that complete hours come from rollups (ADR-010).
+  @windows [{"24h", 24}, {"7d", 24 * 7}, {"30d", 24 * 30}]
+  @default_window "24h"
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     service = Monitoring.get_service!(socket.assigns.current_scope, id)
@@ -33,12 +39,30 @@ defmodule PulseOpsWeb.ServiceLive.Show do
      socket
      |> assign(:page_title, service.name)
      |> assign(:service, service)
+     |> assign(:windows, Enum.map(@windows, &elem(&1, 0)))
+     |> assign(:window, @default_window)
      |> assign(
        :can_manage?,
        Organizations.can?(socket.assigns.current_scope, :manage_services)
      )
-     |> assign(:demo_target?, demo_target?(service))
-     |> load_history()}
+     |> assign(:demo_target?, demo_target?(service))}
+  end
+
+  # The window lives in the URL, so a 30-day view can be linked and survives a
+  # reload. An unknown value falls back to the default rather than erroring: it
+  # is a view preference, not something worth a 400.
+  @impl true
+  def handle_params(params, _uri, socket) do
+    window =
+      case params["window"] do
+        window when is_binary(window) ->
+          if(window_hours(window), do: window, else: @default_window)
+
+        _missing ->
+          @default_window
+      end
+
+    {:noreply, socket |> assign(:window, window) |> load_history()}
   end
 
   @impl true
@@ -96,11 +120,20 @@ defmodule PulseOpsWeb.ServiceLive.Show do
   defp load_history(socket) do
     scope = socket.assigns.current_scope
     service = socket.assigns.service
+    since = DateTime.add(DateTime.utc_now(), -window_hours(socket.assigns.window) * 3600, :second)
 
     socket
     |> assign(:checks, Monitoring.list_checks_for_chart(scope, service, @chart_points))
-    |> assign(:metrics, Monitoring.service_metrics(scope, service))
+    |> assign(:metrics, Monitoring.service_metrics(scope, service, since: since))
     |> assign(:open_incident, Incidents.get_open_incident(service))
+    # A registry lookup, so it is cheap enough to refresh with everything else —
+    # and it has to be refreshed, because a monitor can be abandoned while the
+    # page is open.
+    |> assign(:monitor_state, Monitoring.monitor_state(service))
+  end
+
+  defp window_hours(window) do
+    Enum.find_value(@windows, fn {label, hours} -> if label == window, do: hours end)
   end
 
   @impl true
@@ -146,6 +179,30 @@ defmodule PulseOpsWeb.ServiceLive.Show do
       </div>
 
       <div
+        :if={@monitor_state == :stopped}
+        id="monitor-stopped"
+        class="mb-6 flex items-start gap-3 rounded-box border border-error/40 bg-error/5 p-4 text-error"
+      >
+        <.icon name="lucide-eye-off" class="size-5 shrink-0" />
+        <div>
+          <p class="font-medium">Nothing is watching this service</p>
+          <p class="text-sm opacity-80">
+            It is enabled, but its monitor is not running — usually because it crashed too many
+            times in a row and was given up on. The status shown is the last one recorded, not a
+            current one. Saving the service starts a fresh monitor.
+          </p>
+        </div>
+      </div>
+
+      <p
+        :if={@monitor_state == :disabled}
+        id="monitor-disabled"
+        class="mb-6 text-sm text-base-content/60"
+      >
+        Monitoring is paused for this service. The figures below stop at the last check.
+      </p>
+
+      <div
         :if={@open_incident}
         class="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-base-300 p-4"
       >
@@ -175,15 +232,44 @@ defmodule PulseOpsWeb.ServiceLive.Show do
         </div>
       </.card>
 
+      <div class="mb-3 flex items-center justify-end">
+        <nav id="window-selector" class="join" aria-label="Time window">
+          <.link
+            :for={window <- @windows}
+            patch={
+              ~p"/orgs/#{@current_scope.organization.slug}/services/#{@service}?window=#{window}"
+            }
+            class={["btn btn-sm join-item", window == @window && "btn-active"]}
+            aria-current={window == @window && "true"}
+          >
+            {window}
+          </.link>
+        </nav>
+      </div>
+
       <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <.stat_tile
-          label="Uptime (24h)"
+          label={"Uptime (#{@window})"}
           value={format_percent(@metrics.uptime_percent)}
           hint={"#{@metrics.total} checks"}
         />
-        <.stat_tile label="p50" value={format_ms(@metrics.p50)} />
-        <.stat_tile label="p95" value={format_ms(@metrics.p95)} />
-        <.stat_tile label="p99" value={format_ms(@metrics.p99)} />
+        <.stat_tile label={"p50 (#{@window})"} value={format_ms(@metrics.p50)} />
+        <.stat_tile label={"p95 (#{@window})"} value={format_ms(@metrics.p95)} />
+        <.stat_tile label={"p99 (#{@window})"} value={format_ms(@metrics.p99)} />
+      </div>
+
+      <div
+        :if={tls_notice(@service)}
+        class={["mb-6 flex items-start gap-3 rounded-box border p-4", tls_class(@service)]}
+      >
+        <.icon name="lucide-shield-alert" class="size-5 shrink-0" />
+        <div>
+          <p class="font-medium">{tls_notice(@service)}</p>
+          <p class="text-sm opacity-70">
+            Nothing is wrong with the service right now — this is the one outage that announces
+            itself in advance.
+          </p>
+        </div>
       </div>
 
       <section class="mb-8 rounded-lg border border-base-300 p-4">
@@ -194,10 +280,31 @@ defmodule PulseOpsWeb.ServiceLive.Show do
         <h2 class="mb-2 text-lg font-medium">Recent checks</h2>
         <.uptime_bar checks={@checks} />
         <p class="mt-2 text-xs text-base-content/50">
-          Oldest to newest · checked every {div(@service.check_interval_ms, 1000)}s
+          The last {length(@checks)} probes, oldest to newest, whatever window the figures above
+          use · checked every {div(@service.check_interval_ms, 1000)}s
         </p>
       </section>
     </Layouts.app>
     """
+  end
+
+  # Only says something when there is something to say: a certificate with
+  # months left is not news, and a service never checked has no date to report.
+  defp tls_notice(service) do
+    if Monitoring.tls_expiring?(service) do
+      case Monitoring.tls_days_left(service) do
+        days when days < 0 -> "The TLS certificate expired #{abs(days)} days ago"
+        0 -> "The TLS certificate expires today"
+        days -> "The TLS certificate expires in #{days} days"
+      end
+    end
+  end
+
+  defp tls_class(service) do
+    if Monitoring.tls_days_left(service) < 0 do
+      "border-error/40 bg-error/5 text-error"
+    else
+      "border-warning/40 bg-warning/5 text-warning"
+    end
   end
 end

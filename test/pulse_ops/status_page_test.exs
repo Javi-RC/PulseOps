@@ -5,6 +5,7 @@ defmodule PulseOps.StatusPageTest do
   import PulseOps.MonitoringFixtures
   import PulseOps.OrganizationsFixtures
 
+  alias PulseOps.Maintenance
   alias PulseOps.Monitoring
   alias PulseOps.Organizations
   alias PulseOps.StatusPage
@@ -176,6 +177,87 @@ defmodule PulseOps.StatusPageTest do
       service_fixture(scope, %{name: "Bravo"}) |> Monitoring.update_service_status(:degraded)
 
       assert StatusPage.overview(organization).overall == :degraded
+    end
+  end
+
+  describe "maintenance on the status page" do
+    setup do
+      scope = published(organization_scope_fixture())
+      %{scope: scope, organization: scope.organization}
+    end
+
+    defp window(scope, attrs \\ %{}) do
+      {:ok, window} =
+        Maintenance.create_window(
+          scope,
+          Enum.into(attrs, %{
+            reason: "Deploying",
+            starts_at: DateTime.add(DateTime.utc_now(:second), -60, :second),
+            ends_at: DateTime.add(DateTime.utc_now(:second), 3600, :second)
+          })
+        )
+
+      window
+    end
+
+    test "an organization-wide window covers every published service", %{
+      scope: scope,
+      organization: organization
+    } do
+      one = service_fixture(scope, %{name: "Payments"})
+      two = service_fixture(scope, %{name: "Search"})
+      window(scope)
+
+      overview = StatusPage.overview(organization)
+
+      assert Map.keys(overview.maintenance_by_service) |> Enum.sort() ==
+               Enum.sort([one.id, two.id])
+    end
+
+    test "a per-service window covers only that service", %{
+      scope: scope,
+      organization: organization
+    } do
+      _one = service_fixture(scope, %{name: "Payments"})
+      two = service_fixture(scope, %{name: "Search"})
+      window(scope, %{service_id: two.id})
+
+      overview = StatusPage.overview(organization)
+
+      assert Map.keys(overview.maintenance_by_service) == [two.id]
+    end
+
+    test "a window covering only a non-public service marks nothing", %{
+      scope: scope,
+      organization: organization
+    } do
+      service_fixture(scope, %{name: "Payments"})
+      hidden = service_fixture(scope, %{name: "Internal Admin", public: false})
+      window(scope, %{service_id: hidden.id})
+
+      overview = StatusPage.overview(organization)
+
+      # The window is announced, because the organization scheduled it — but it
+      # cannot mark a service the page does not publish.
+      assert overview.maintenance != []
+      assert overview.maintenance_by_service == %{}
+    end
+
+    test "a finished window is neither announced nor marked", %{
+      scope: scope,
+      organization: organization
+    } do
+      service_fixture(scope, %{name: "Payments"})
+
+      window(scope, %{
+        starts_at: DateTime.add(DateTime.utc_now(:second), -3600, :second),
+        ends_at: DateTime.add(DateTime.utc_now(:second), -60, :second)
+      })
+
+      overview = StatusPage.overview(organization)
+
+      assert overview.maintenance == []
+      assert overview.maintenance_by_service == %{}
     end
   end
 end

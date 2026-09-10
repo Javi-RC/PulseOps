@@ -68,15 +68,22 @@ defmodule PulseOpsWeb.Router do
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
 
+    # Not :api. That pipeline authenticates with an organization token, and a
+    # monitor probing this endpoint presents none — sharing it made every probe
+    # a 401, so the target could never be healthy. Not :browser either: its CSRF
+    # protection would reject the posts.
+    pipeline :dev_target do
+      plug :accepts, ["json"]
+    end
+
     # A monitoring target that can be broken on demand, so an incident can be
     # produced end to end without waiting for something real to fail.
     scope "/dev", PulseOpsWeb do
-      pipe_through :api
+      pipe_through :dev_target
 
       get "/flaky", FlakyController, :show
-      # Deliberately on the api pipeline: the browser pipeline's CSRF protection
-      # would reject these, and the dashboard toggles the endpoint through a
-      # LiveView event rather than an HTTP post anyway.
+      # The dashboard toggles the endpoint through a LiveView event rather than
+      # these posts; they are here for scripts and curl.
       post "/flaky/break", FlakyController, :break
       post "/flaky/heal", FlakyController, :heal
     end
@@ -115,6 +122,7 @@ defmodule PulseOpsWeb.Router do
       live "/orgs/:org/settings/notifiers/new", NotifierLive.Form, :new
       live "/orgs/:org/settings/notifiers/:id/edit", NotifierLive.Form, :edit
       live "/orgs/:org/settings/api-tokens", ApiTokenLive.Index, :index
+      live "/orgs/:org/maintenance", MaintenanceLive.Index, :index
     end
 
     post "/users/update-password", UserSessionController, :update_password

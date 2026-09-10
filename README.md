@@ -81,6 +81,33 @@ second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not
 scale by replicas until there is leader election.
 
+## Certificate expiry
+
+Every `https` service's certificate is read once a day and its expiry stored. A
+certificate inside the warning window is announced once — and again if a renewal
+later runs low — without opening an incident, because the service is up and this
+needs a calendar entry rather than a page.
+
+## Notifications that stay signal
+
+A service oscillating on its threshold sends **one** message saying how often it
+moved, not one per crossing. A critical incident that nobody acknowledges within
+the escalation window reaches the channels marked "only for escalations", which
+stay silent the rest of the time.
+
+Acknowledging an incident is separate from moving it to *investigating*: it says
+somebody has this, which is what stops the escalation.
+
+## Maintenance windows
+
+Schedule a window before a deploy and PulseOps stops paging for it. The probes
+keep running and the history stays honest — the status still changes, the uptime
+figures still count it — but no incident opens, and the status page tells your
+customers it was planned.
+
+Nothing has to be turned back on: when the window ends with the service still
+broken, the next check opens an incident.
+
 ## Inviting people
 
 Adding somebody on the members page adds them straight away if they already have

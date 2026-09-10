@@ -372,6 +372,219 @@ already have.
 
 ---
 
+## ADR-014 — Maintenance suppresses the consequence, not the monitoring
+
+**Decision.** A maintenance window is a time range, optionally narrowed to one
+service. During it, probes still run, checks are still recorded and the service's
+status still changes — what does not happen is that an **incident opens**. The
+check lives in `Incidents`, in the one private function both paths into an
+incident go through.
+
+Nothing schedules the end of the suppression. When a window finishes with the
+service still broken, the next probe reconciles and opens an incident then
+(ADR-009).
+
+**Why suppress the consequence and not the checks.** Stopping the probes during a
+window would be simpler and would produce a hole in the history exactly where
+somebody later wants to know what happened — "was it already broken before the
+deploy?" is the first question after a bad release, and it is unanswerable if
+nothing was recorded. Recording everything and holding back only the paging keeps
+the dashboard, the uptime figures and the chart honest.
+
+**Why in `Incidents` and not in `ServiceMonitor.transition/3`.** The roadmap said
+`transition/3` is the single gate, and it *was* — until F1 gave incidents a
+second way to open, through reconciliation. Suppressing at the transition alone
+would leave a service that was already down when the window started getting an
+incident from the reconciliation on its next probe: the window would silence
+new outages and not the one it was scheduled for. Both paths funnel into
+`insert_incident/4`, which is where the check belongs.
+
+**Why nothing schedules the un-suppression.** A timer that reopens incidents when
+a window ends is a second mechanism that can fail, drift, or fire against a
+service that recovered in the meantime. Reconciliation already asks "is this
+service down with no incident?" on every probe, so the silence lifts itself, and
+the incident that follows carries a `:reopened` event that says how it came
+about. This is F1 paying for itself.
+
+**Rejected.** *Pausing the monitors.* Loses the history and needs the monitors
+restarted afterwards, which is the O(n) blocking work F7 removed.
+
+*Suppressing the notifications instead of the incidents.* The incident would
+still open, so the dashboard, the status page and the incident list would all
+show an outage nobody was told about — the worst of both.
+
+*Suppressing the resolution too.* Telling people something recovered is not a
+page in the night, and withholding it would make the timeline lie.
+
+**Consequence.** An incident already open when a window starts is left alone: a
+window says "expect trouble from now on", not "forget what is already broken".
+A window is capped at 31 days, because beyond that it is not maintenance, it is
+a service nobody wants to hear about — and the way to say that is to disable it.
+
+---
+
+## ADR-015 — Flap detection counts incidents, and escalation is decided at the end
+
+**Decision.** A service that has opened `flap_threshold` incidents inside
+`flap_window_seconds` is treated as oscillating. Its per-incident notifications
+stop and a single `DigestJob` is scheduled instead, made unique per service so
+everything arriving while it waits collapses into it. The digest counts when it
+**runs**, not when it was scheduled.
+
+A critical incident schedules an `EscalationJob` for
+`escalation_after_seconds` later. When that job runs it re-reads the incident
+and does nothing unless it is still open and still unacknowledged.
+
+Acknowledgement is its own field, not a workflow status. Notifiers gain
+`escalation_only`, which keeps a channel silent until an escalation.
+
+**Why count incidents rather than track transitions.** A flap is a service
+crossing its threshold repeatedly, and every crossing already produces exactly
+one incident row with a `started_at`. Counting those is one indexed query and
+needs no new bookkeeping — and, more usefully, it measures **the thing people
+actually receive**. A definition based on raw check results would count
+oscillations nobody was ever told about, which is not what "flapping" means to
+somebody being paged.
+
+**Why the digest counts at run time.** The interesting number is how often the
+service moved *in total*, and at schedule time only the first crossing has
+happened. Counting late means the message describes what occurred rather than
+what had occurred when the storm began.
+
+**Why escalation is decided when the job runs.** The alternative is to find and
+cancel the scheduled job when somebody acknowledges or resolves. That means
+knowing the job's id, handling the case where it has already started, and
+getting it right in three places — acknowledge, resolve, and the automatic
+recovery. Re-reading the incident at the end is one check in one place, and it
+is correct by construction: whatever happened in between, the question asked is
+the one that matters.
+
+**Why acknowledgement is not a status.** Moving an incident to `:investigating`
+says something about the incident; acknowledging says something about the
+people — somebody has this. In the first minute of an outage both are true and
+neither implies the other, and conflating them means you cannot say "I have seen
+this" without also claiming to have diagnosed it.
+
+**Rejected.** *Suppressing notifications with an Oban `unique` on `NotifyJob`
+alone.* Collapses duplicates but says nothing: the receiver gets one arbitrary
+message out of ten and no indication that ten happened.
+
+*Escalating to a fixed second address.* An organization's second line is a
+channel like any other, and modelling it as one means it inherits the service
+narrowing, the pausing and the assignment that already exist.
+
+*Escalating only to the escalation-only channels.* Nobody picked the incident
+up, so making **more** noise is the intent; excluding the people already told
+would make an escalation quieter than the page that preceded it.
+
+**Consequence.** An escalation-only channel with nothing else configured hears
+nothing at all, which is correct and can look like a broken configuration — the
+form says so where it is set.
+
+---
+
+## ADR-016 — TLS expiry is read without verifying, checked daily, and is not an incident
+
+**Decision.** A daily job reads the certificate of every enabled `https` service
+and stores its expiry. A certificate inside the warning window is announced
+through the ordinary notifier channels, once per expiry. It does **not** open an
+incident.
+
+The handshake is made with `verify: :verify_none`.
+
+**Why not verify.** The job is to read the date the host presents. A certificate
+that has already expired, is self-signed, or carries the wrong name all fail
+verification — and those are exactly the cases somebody most needs told about.
+Verifying would turn "your certificate expired last night" into a connection
+error with no date in it, which is the least useful possible answer. Nothing is
+trusted as a result: the only thing taken from the peer is a date, used to decide
+whether to warn a human. Reading it against `expired.badssl.com` returned
+`~U[2015-04-12 23:59:59Z]`, which a verifying connection could not have told us.
+
+**Why daily rather than per probe.** A certificate changes at most once in its
+life. Checking on every probe would be a TLS handshake every thirty seconds per
+service to learn a date that moves once a quarter.
+
+**Why not an incident.** The service is up. Opening an incident would conflate
+"broken" with "will break", put a false outage in the uptime figures, and page
+whoever is on call for something that needs a calendar entry rather than a
+response. It is a warning with a date on it, which is a different thing to
+receive — and it carries its own webhook event so a receiver can route it
+differently.
+
+**Why `tls_warned_for` holds a date, not a boolean.** Renewing a certificate
+moves the expiry, and the next one deserves its own warning. A boolean would
+either warn every day of the window or go silent for ever after the first time.
+Recording *which* expiry was warned about makes "warn once per certificate" fall
+out of a comparison.
+
+**Rejected.** *Checking during the health probe.* Free in the sense that a
+connection is already being made, and it is an HTTP connection, not a raw TLS
+one — the certificate is not exposed at that layer without reaching past Req.
+
+*Storing only "days remaining".* It goes stale the moment it is written. The
+expiry is the fact; the days are a rendering of it, computed when needed —
+which is also why the delivery job recomputes rather than trusting the number it
+was queued with.
+
+**Consequence.** `TlsCheck.Ssl` is the network seam and is excluded from
+coverage, like the other places the suite replaces I/O. Everything it does with
+what comes back — two time formats and RFC 5280's two-digit-year pivot at 2049 —
+lives in `TlsCheck.Certificate`, which is pure and tested directly.
+
+---
+
+## ADR-017 — Every monitor gets a supervisor of its own
+
+**Decision.** `MonitorSupervisor` no longer supervises monitors. It starts one
+`MonitorContainer` per service — a plain `Supervisor` whose only child is that
+service's `ServiceMonitor` — as a `:temporary` child. The container carries the
+restart budget, `max_restarts: 5, max_seconds: 60`. `MonitorSupervisor` has no
+budget of its own to speak of, because it never restarts anything.
+
+**Why.** Restart intensity is a property of a supervisor, not of a child. The old
+`DynamicSupervisor` had `max_restarts: 5, max_seconds: 60`, which reads as "give
+up on a monitor after five crashes" and meant "give up on *all* of them after
+five crashes between them". A sixth crash of one monitor in a minute terminated
+the supervisor and every monitor in every organization, and `Bootstrapper` does
+not run twice, so nothing came back until the application restarted (F10). The
+numbers were right; they were attached to the wrong process.
+
+**Why temporary containers.** A container that exceeds its budget exits. If
+`MonitorSupervisor` restarted it, that restart would be counted against
+`MonitorSupervisor` — the shared budget again, one level up, and a service with a
+crash at boot would still eventually take everything down. A temporary child is
+never restarted, so it is never counted. The service is left unwatched, and it
+says so: `Monitoring.monitor_state/1` reports `:stopped`, and the service page
+shows "Nothing is watching this service". Editing the service restarts it.
+
+**Why the monitor is significant.** A monitor stops *normally* when its service
+row disappears under it. The container would otherwise live on empty, holding the
+service's name in the registry. `auto_shutdown: :any_significant` makes that
+normal exit shut the container down too.
+
+**Rejected.** *Raising `max_restarts` on the shared supervisor.* Moves the cliff
+instead of removing it; with enough services, crashes across all of them add up
+to any number.
+
+*Counting crashes inside `ServiceMonitor` and stopping itself.* Re-implements
+supervision by hand, and cannot count a crash that kills the process before it
+has written anything down.
+
+*A `:one_for_one` supervisor with `restart: :temporary` monitors and a separate
+process watching for their `:DOWN` to restart them with a backoff.* It would add
+backoff, which a container does not have, but it is a supervisor built by hand
+next to one that already exists. Worth revisiting if a service that crashes at
+boot should be retried after a minute rather than left until it is edited.
+
+**Consequence.** Two processes per service instead of one, which at the scale of
+a monitor per service is nothing. `stop_monitor/1` terminates the container and
+waits for both registry names to be released. "Is this service watched?" asks
+about the container, so a monitor in the middle of a restart inside its budget
+does not flicker to "stopped".
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

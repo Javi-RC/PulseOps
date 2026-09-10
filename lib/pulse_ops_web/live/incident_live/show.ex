@@ -71,6 +71,15 @@ defmodule PulseOpsWeb.IncidentLive.Show do
     |> respond(socket, "Incident resolved")
   end
 
+  def handle_event("acknowledge", _params, socket) do
+    socket.assigns.current_scope
+    |> Incidents.acknowledge_incident(socket.assigns.incident)
+    |> respond(socket, "Acknowledged. This will not escalate.")
+  end
+
+  defp acknowledger(%{acknowledged_by: %{email: email}}), do: email
+  defp acknowledger(_incident), do: "somebody"
+
   defp respond({:ok, incident}, socket, message) do
     {:noreply,
      socket
@@ -175,7 +184,21 @@ defmodule PulseOpsWeb.IncidentLive.Show do
           <button class="btn btn-sm">Add note</button>
         </form>
 
-        <button phx-click="resolve" class="btn btn-primary btn-sm">Resolve incident</button>
+        <div class="flex flex-wrap gap-2">
+          <button
+            :if={is_nil(@incident.acknowledged_at)}
+            phx-click="acknowledge"
+            class="btn btn-sm"
+          >
+            <.icon name="lucide-hand" class="size-4" /> Acknowledge
+          </button>
+
+          <button phx-click="resolve" class="btn btn-primary btn-sm">Resolve incident</button>
+        </div>
+
+        <p :if={@incident.acknowledged_at} class="mt-2 text-xs text-base-content/50">
+          Acknowledged by {acknowledger(@incident)}, so it will not escalate.
+        </p>
       </div>
 
       <div :if={@incident.cause && not (@can_respond? and Incident.open?(@incident))} class="mb-8">

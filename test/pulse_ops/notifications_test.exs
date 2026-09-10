@@ -7,6 +7,7 @@ defmodule PulseOps.NotificationsTest do
   import PulseOps.OrganizationsFixtures
 
   alias PulseOps.Incidents
+  alias PulseOps.Maintenance
   alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Notifications
   alias PulseOps.Notifications.NotifyJob
@@ -185,5 +186,66 @@ defmodule PulseOps.NotificationsTest do
       "incident_id" => incident.id,
       "event" => event
     }
+  end
+
+  describe "notifications during a maintenance window" do
+    setup do
+      %{scope: organization_scope_fixture()}
+    end
+
+    test "nobody is paged for a deploy somebody scheduled", %{scope: scope} do
+      service = service_fixture(scope)
+      notifier_fixture(scope)
+
+      {:ok, _window} =
+        Maintenance.create_window(scope, %{
+          reason: "Deploying",
+          starts_at: DateTime.add(DateTime.utc_now(:second), -60, :second),
+          ends_at: DateTime.add(DateTime.utc_now(:second), 1800, :second)
+        })
+
+      assert Incidents.open_incident(service, AlertRule.default(), "down") == {:ok, :suppressed}
+
+      # The suppression is not a second rule about notifications: no incident
+      # opened, so there was nothing to announce.
+      refute_enqueued(worker: NotifyJob)
+    end
+
+    test "and is paged normally once it has ended", %{scope: scope} do
+      service = service_fixture(scope)
+      notifier = notifier_fixture(scope)
+
+      {:ok, _window} =
+        Maintenance.create_window(scope, %{
+          reason: "Finished",
+          starts_at: DateTime.add(DateTime.utc_now(:second), -3600, :second),
+          ends_at: DateTime.add(DateTime.utc_now(:second), -60, :second)
+        })
+
+      assert {:ok, incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+
+      assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "opened"))
+    end
+
+    test "a recovery during a window is still announced", %{scope: scope} do
+      service = service_fixture(scope)
+      notifier = notifier_fixture(scope)
+
+      # The incident opened before the window, from a real outage.
+      {:ok, incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+
+      {:ok, _window} =
+        Maintenance.create_window(scope, %{
+          reason: "Deploying",
+          starts_at: DateTime.add(DateTime.utc_now(:second), -60, :second),
+          ends_at: DateTime.add(DateTime.utc_now(:second), 1800, :second)
+        })
+
+      {:ok, _resolved} = Incidents.resolve_open_incident(service)
+
+      # Telling people something recovered is not a page in the night, and
+      # leaving it out would make the timeline lie.
+      assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "resolved"))
+    end
   end
 end

@@ -16,6 +16,7 @@ defmodule PulseOps.Incidents do
   alias PulseOps.Accounts.Scope
   alias PulseOps.Incidents.Incident
   alias PulseOps.Incidents.IncidentEvent
+  alias PulseOps.Maintenance
   alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Service
   alias PulseOps.Notifications
@@ -49,6 +50,10 @@ defmodule PulseOps.Incidents do
   existing incident if one is already open. The partial unique index is what
   actually guarantees that, so a race between two monitors ends with one insert
   and one no-op rather than a duplicate or a crash (ADR-004).
+
+  Returns `{:ok, :suppressed}` when the service is inside a maintenance window:
+  the probe still happened and was still recorded, but nobody is paged for a
+  deploy somebody scheduled.
   """
   def open_incident(%Service{} = service, %AlertRule{} = rule, reason \\ nil) do
     insert_incident(service, rule, :detected, detection_description(service, reason))
@@ -73,6 +78,8 @@ defmodule PulseOps.Incidents do
   """
   @spec reconcile_incident(Service.t(), atom(), AlertRule.t()) ::
           {:ok, :unchanged | :suppressed | Incident.t() | nil} | {:error, term()}
+  # `:suppressed` covers both reasons an incident may not open: a manual
+  # resolution still inside its grace period, and a maintenance window.
   def reconcile_incident(service, status, rule)
 
   def reconcile_incident(%Service{} = service, :down, %AlertRule{} = rule) do
@@ -97,6 +104,22 @@ defmodule PulseOps.Incidents do
   def reconcile_incident(%Service{}, :unknown, %AlertRule{}), do: {:ok, :unchanged}
 
   defp insert_incident(%Service{} = service, %AlertRule{} = rule, event_type, description) do
+    if Maintenance.under_maintenance?(service) do
+      # Both paths into an incident come through here — the transition hook and
+      # reconciliation — so this is the one place suppression has to live. The
+      # check is only made when an incident is about to open, which is rare;
+      # a probe that changes nothing never asks.
+      #
+      # Nothing schedules the un-suppression: when the window ends with the
+      # service still down, the next probe reconciles and opens an incident
+      # then (ADR-009).
+      {:ok, :suppressed}
+    else
+      do_insert_incident(service, rule, event_type, description)
+    end
+  end
+
+  defp do_insert_incident(%Service{} = service, %AlertRule{} = rule, event_type, description) do
     attrs = %{
       service_id: service.id,
       organization_id: service.organization_id,
@@ -244,6 +267,39 @@ defmodule PulseOps.Incidents do
   end
 
   @doc """
+  One page of the scoped organization's incidents, newest first, optionally
+  narrowed to the open or the resolved ones.
+
+  Fetches one row more than a page holds and drops it, which answers "is there
+  another page?" without a second query to count everything.
+  """
+  @spec page_incidents(Scope.t(), keyword()) :: %{entries: [Incident.t()], has_more?: boolean()}
+  def page_incidents(%Scope{} = scope, opts \\ []) do
+    per_page = Keyword.get(opts, :per_page, 25)
+    page = max(Keyword.get(opts, :page, 1), 1)
+
+    rows =
+      scope
+      |> incidents_query()
+      |> filter_status(Keyword.get(opts, :status, :all))
+      # started_at has one-second resolution, so incidents opened in the same
+      # second have no order of their own — and offset pagination over rows
+      # with no stable order shows some twice and others never. The id breaks
+      # the tie, for the same reason the alert-rule lookup needed one (F2).
+      |> order_by([i], desc: i.started_at, desc: i.id)
+      |> limit(^(per_page + 1))
+      |> offset(^((page - 1) * per_page))
+      |> preload(:service)
+      |> Repo.all()
+
+    %{entries: Enum.take(rows, per_page), has_more?: length(rows) > per_page}
+  end
+
+  defp filter_status(query, :open), do: where(query, [i], is_nil(i.resolved_at))
+  defp filter_status(query, :resolved), do: where(query, [i], not is_nil(i.resolved_at))
+  defp filter_status(query, :all), do: query
+
+  @doc """
   The unresolved incidents in the scoped organization, most severe first.
   """
   def list_active_incidents(%Scope{} = scope) do
@@ -272,7 +328,7 @@ defmodule PulseOps.Incidents do
     scope
     |> incidents_query()
     |> where([i], i.id == ^id)
-    |> preload([:service, :resolved_by, events: :user])
+    |> preload([:service, :resolved_by, :acknowledged_by, events: :user])
     |> Repo.one!()
   end
 
@@ -344,6 +400,98 @@ defmodule PulseOps.Incidents do
           {:error, changeset}
       end
     end
+  end
+
+  @doc """
+  Whether a service is oscillating rather than simply broken.
+
+  Counts the incidents it has opened inside the flap window. A service that
+  crosses its threshold repeatedly opens and closes an incident each time, so
+  the count of *openings* is the flap signal — no extra bookkeeping, and it
+  measures the thing people actually receive.
+  """
+  @spec flapping?(Service.t(), DateTime.t()) :: boolean()
+  def flapping?(service, now \\ DateTime.utc_now())
+
+  def flapping?(%Service{id: service_id}, now) do
+    threshold = Notifications.flap_threshold()
+    since = DateTime.add(now, -Notifications.flap_window_seconds(), :second)
+
+    count =
+      Repo.aggregate(
+        from(i in Incident, where: i.service_id == ^service_id and i.started_at >= ^since),
+        :count
+      )
+
+    count >= threshold
+  end
+
+  @doc """
+  Marks an incident as being looked at, which stops it escalating.
+
+  Deliberately not a workflow status. Moving an incident to `:investigating`
+  says something about the incident; acknowledging says something about the
+  people — somebody has this. In the first minute of an outage both are true and
+  neither implies the other.
+  """
+  @spec acknowledge_incident(Scope.t(), Incident.t()) ::
+          {:ok, Incident.t()} | {:error, :unauthorized | :already_resolved | Ecto.Changeset.t()}
+  def acknowledge_incident(%Scope{} = scope, %Incident{} = incident) do
+    true = incident.organization_id == scope.organization.id
+
+    with :ok <- Organizations.authorize(scope, :respond_to_incidents),
+         :ok <- ensure_open(incident) do
+      Multi.new()
+      |> Multi.update(
+        :incident,
+        Ecto.Changeset.change(incident,
+          acknowledged_at: DateTime.utc_now(:second),
+          acknowledged_by_id: scope.user.id
+        )
+      )
+      |> Multi.insert(:event, fn %{incident: updated} ->
+        IncidentEvent.changeset(%IncidentEvent{}, %{
+          incident_id: updated.id,
+          user_id: scope.user.id,
+          type: :acknowledged,
+          description: "Acknowledged"
+        })
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{incident: updated}} ->
+          broadcast(scope.organization.id, {:incident_updated, updated})
+          {:ok, updated}
+
+        {:error, :incident, changeset, _changes} ->
+          {:error, changeset}
+      end
+    end
+  end
+
+  @doc """
+  Whether an incident is still waiting for somebody to pick it up.
+  """
+  @spec unacknowledged?(Incident.t()) :: boolean()
+  def unacknowledged?(%Incident{acknowledged_at: nil, resolved_at: nil}), do: true
+  def unacknowledged?(%Incident{}), do: false
+
+  @doc """
+  Writes an escalation onto the timeline, so the record shows that nobody picked
+  the incident up rather than only that somebody eventually did.
+  """
+  @spec record_escalation(Incident.t()) :: :ok
+  def record_escalation(%Incident{} = incident) do
+    %IncidentEvent{}
+    |> IncidentEvent.changeset(%{
+      incident_id: incident.id,
+      type: :escalated,
+      description: "No acknowledgement, so the escalation channels were told"
+    })
+    |> Repo.insert()
+
+    broadcast(incident.organization_id, {:incident_updated, incident})
+    :ok
   end
 
   @doc """

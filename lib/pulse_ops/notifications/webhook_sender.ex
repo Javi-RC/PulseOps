@@ -28,7 +28,7 @@ defmodule PulseOps.Notifications.WebhookSender do
   Sends one notification. Returns `:ok` or `{:error, reason}`.
   """
   def deliver(%Notifier{url: url} = notifier, %Incident{} = incident, event)
-      when event in ["opened", "resolved"] do
+      when event in ["opened", "resolved", "escalated"] do
     # Re-checked immediately before the request, not only when the notifier was
     # saved: the host can be repointed at a private address in between.
     case UrlGuard.validate(url) do
@@ -37,12 +37,16 @@ defmodule PulseOps.Notifications.WebhookSender do
     end
   end
 
-  defp post(%Notifier{url: url, secret_token: secret}, %Incident{} = incident, event) do
+  defp post(%Notifier{} = notifier, %Incident{} = incident, event) do
+    post_body(notifier, payload(incident, event))
+  end
+
+  defp post_body(%Notifier{url: url, secret_token: secret}, body) do
     headers = [{"user-agent", "PulseOps"}]
     headers = if secret, do: [{"authorization", "Bearer #{secret}"} | headers], else: headers
 
     case Req.post(url,
-           json: payload(incident, event),
+           json: body,
            headers: headers,
            receive_timeout: @receive_timeout_ms,
            retry: false,
@@ -52,6 +56,56 @@ defmodule PulseOps.Notifications.WebhookSender do
       {:ok, %Req.Response{status: status}} -> {:error, {:http_status, status}}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @doc """
+  Sends the digest for a flapping service. A distinct `event` so a receiver can
+  branch on it without parsing prose, and a flat shape like every other payload.
+  """
+  def deliver_digest(%Notifier{url: url} = notifier, service, summary) do
+    case UrlGuard.validate(url) do
+      :ok -> post_body(notifier, digest_payload(service, summary))
+      {:error, reason} -> {:error, {:blocked_target, reason}}
+    end
+  end
+
+  defp digest_payload(service, summary) do
+    %{
+      "event" => "flapping",
+      "service" => %{
+        "id" => service.id,
+        "name" => service.name,
+        "environment" => to_string(service.environment),
+        "status" => to_string(service.status)
+      },
+      "transitions" => summary.count,
+      "still_open" => summary.still_open,
+      "since" => iso(summary.first_at)
+    }
+  end
+
+  @doc """
+  Sends a certificate-expiry warning. A distinct `event` so a receiver can route
+  it differently from an outage — because it is not one.
+  """
+  def deliver_tls_warning(%Notifier{url: url} = notifier, service, days_left) do
+    case UrlGuard.validate(url) do
+      :ok -> post_body(notifier, tls_payload(service, days_left))
+      {:error, reason} -> {:error, {:blocked_target, reason}}
+    end
+  end
+
+  defp tls_payload(service, days_left) do
+    %{
+      "event" => "tls_expiring",
+      "service" => %{
+        "id" => service.id,
+        "name" => service.name,
+        "environment" => to_string(service.environment)
+      },
+      "days_left" => days_left,
+      "expires_at" => iso(service.tls_expires_at)
+    }
   end
 
   # Tests route every webhook through the `:pulseops` Req.Test stub so nothing

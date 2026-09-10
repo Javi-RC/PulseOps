@@ -21,7 +21,7 @@ defmodule PulseOps.Notifications.IncidentNotifier do
   letting the Oban job retry a failed delivery.
   """
   def deliver(%Notifier{assigned_users: users}, %Incident{} = incident, event)
-      when event in ["opened", "resolved"] and is_list(users) do
+      when event in ["opened", "resolved", "escalated"] and is_list(users) do
     Enum.reduce_while(users, {:ok, nil}, fn user, _acc ->
       case deliver_one(user.email, incident, event) do
         {:ok, metadata} -> {:cont, {:ok, metadata}}

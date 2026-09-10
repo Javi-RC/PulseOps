@@ -41,6 +41,7 @@ defmodule PulseOps.Notifications.Notifier do
     field :name, :string
     field :type, Ecto.Enum, values: @types
     field :enabled, :boolean, default: true
+    field :escalation_only, :boolean, default: false
     field :url, :string
     field :secret_token, :string
     field :assignee_ids, {:array, :integer}, virtual: true
@@ -71,7 +72,16 @@ defmodule PulseOps.Notifications.Notifier do
   """
   def changeset(notifier, attrs, %Scope{} = scope) do
     notifier
-    |> cast(attrs, [:name, :type, :enabled, :url, :secret_token, :service_id, :assignee_ids])
+    |> cast(attrs, [
+      :name,
+      :type,
+      :enabled,
+      :escalation_only,
+      :url,
+      :secret_token,
+      :service_id,
+      :assignee_ids
+    ])
     |> validate_required([:name, :type])
     |> validate_inclusion(:type, @types)
     |> put_change(:organization_id, scope.organization.id)

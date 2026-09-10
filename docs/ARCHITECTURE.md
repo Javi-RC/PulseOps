@@ -32,18 +32,35 @@ PulseOps.Application
 ├── PulseOps.Monitoring.Supervisor        (:one_for_one)
 │   ├── Registry                          (:unique — locates a monitor by service id)
 │   ├── Task.Supervisor                   (runs the HTTP requests)
-│   ├── MonitorSupervisor                 (DynamicSupervisor — one child per service)
+│   ├── MonitorSupervisor                 (DynamicSupervisor — one temporary container per service)
+│   │   └── MonitorContainer              (Supervisor — this service's own restart budget)
+│   │       └── ServiceMonitor            (transient, significant)
 │   └── Bootstrapper                      (starts a monitor per enabled service at boot)
 ├── Oban                                  (job queue — cron hourly rollups and nightly retention, incident notification deliveries)
 └── PulseOpsWeb.Endpoint
 ```
 
 Each `ServiceMonitor` is registered as `{:via, Registry, {PulseOps.Monitoring.Registry,
-{:monitor, service_id}}}`, so it can be found, restarted or stopped by service id.
+{:monitor, service_id}}}`, and its container as `{:container, service_id}`, so
+both can be found, restarted or stopped by service id.
 
-Monitors are `restart: :transient` under a `DynamicSupervisor` with bounded
-`max_restarts`. A monitor whose endpoint makes it crash repeatedly is given up on
-without affecting any other monitor — fault isolation is the point of the design.
+**Restart budgets are per service** (ADR-017). Restart intensity belongs to a
+supervisor, not to a child, so a budget shared by every monitor is not a budget
+per monitor: before F10 was fixed, one monitor crashing six times in a minute
+terminated the shared `DynamicSupervisor` with every monitor under it, and
+nothing started them again. Each monitor now sits alone in a `MonitorContainer`
+with `max_restarts: 5, max_seconds: 60`. When a monitor exceeds that, only its
+container exits. Containers are `:temporary` under `MonitorSupervisor`, so a
+container that gave up stays down and is never counted against the shared
+supervisor. The monitor is a *significant* child with `auto_shutdown:
+:any_significant`, so a monitor that stops normally — its service row is gone —
+takes its container with it rather than leaving an empty one holding the name.
+
+A service that has been given up on is not silent. An enabled service with no
+container says "Nothing is watching this service" on its page
+(`Monitoring.monitor_state/1`), instead of showing its last recorded status as
+though it were current. The state is read from the container, not the monitor,
+so a monitor that is mid-restart inside its budget still counts as watched.
 
 A monitor reads its alert rule at boot, and the context casts to every monitor
 whose rule changed so each re-reads it in its own process — the new thresholds
@@ -91,6 +108,16 @@ payload that its database is gone. The monitor builds those options and the HTTP
 client stays a function of a URL and a keyword list, never learning what a
 `Service` is.
 
+A maintenance window suppresses the *consequence* of a failure, not the
+monitoring of it: probes still run, checks are still recorded and the status
+still changes, but no incident opens, so a planned deploy pages nobody. The check
+sits in `Incidents`, in the one function both paths into an incident go
+through — the transition hook and reconciliation — because suppressing only the
+transition would let a service that was already down get an incident from the
+next reconciliation. Nothing schedules the end of the silence: when the window
+finishes with the service still broken, the next probe reconciles and opens one
+then. See ADR-014.
+
 Deciding *what the status is* is not part of the monitor. `StatusMachine` is a
 pure module — no processes, no database, no clock — that folds probe verdicts
 into a status under the rule's thresholds. The monitor owns the I/O and the
@@ -106,10 +133,14 @@ organizations ──┬── organization_members ──── users
                 ├── notifiers                 (webhook URL or email per organization)
                 ├── api_tokens                (hashed; acts as the user who made it)
                 ├── organization_invitations  (hashed; single use, expires)
+                ├── maintenance_windows       (org-wide or one service; suppresses incidents)
                 └── services ──┬── service_checks ──── service_check_rollups
                                └── incidents ──── incident_events
 ```
 
+- `services` — certificate expiry is watched daily for `https` ones and warned
+  about once per expiry, without opening an incident: the service is up, and a
+  certificate running out needs a calendar entry rather than a page (ADR-016).
 - `services` — name, description, environment, url, `check_interval_ms`,
   `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`, plus
   how to make the request: `http_method`, `request_headers`, `request_body`,
@@ -143,6 +174,9 @@ organizations ──┬── organization_members ──── users
   suppresses reconciliation for a grace period, so it reads as a snooze rather
   than being undone on the next probe (ADR-009).
 - `incident_events` — the timeline; `user_id` is null for automatic events.
+  `acknowledged_at` on the incident is deliberately not a workflow status:
+  `:investigating` says something about the incident, acknowledging says
+  somebody has it, and in the first minute both are true (ADR-015).
 - `notifiers` — where an organization is told about incidents: a `:webhook` (URL +
   optional bearer `secret_token`) or an `:email`, with `enabled` to pause without
   deleting. A notifier is `:organization`-scoped and may be narrowed to a single
@@ -151,6 +185,10 @@ organizations ──┬── organization_members ──── users
   webhooks the assignments record who is responsible for the channel. When an
   incident opens or resolves, `PulseOps.Notifications` queues one `NotifyJob` per
   matching enabled notifier; a slow receiver never blocks the monitor.
+  `escalation_only` keeps a channel silent until a critical incident has gone
+  unacknowledged. A service that opens too many incidents inside the flap window
+  stops sending per-incident messages and sends one `DigestJob` instead, unique
+  per service so a storm becomes a message (ADR-015).
 
 ## Outbound requests
 
@@ -242,6 +280,11 @@ duplicated and protects nothing else. Leader election or partitioning by
 `service_id` has to exist before scaling by replicas.
 
 ## Testing seams
+
+Reading a certificate is a second seam of the same shape:
+`PulseOps.Monitoring.TlsCheck` is a behaviour with an `:ssl` implementation and a
+Mox mock, because a handshake needs a real host. The parsing it does with what
+comes back is pure and lives in `TlsCheck.Certificate`.
 
 The HTTP client is a behaviour, `PulseOps.Monitoring.HealthCheck`, resolved through
 application config. Tests swap in a Mox mock; development and production use
