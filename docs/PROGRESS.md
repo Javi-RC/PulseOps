@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `feature/tls-expiry` |
-| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) in progress — operational reliability |
-| Next | The four UX items — last of Phase 4 |
-| Checks | `mix check` green: 702 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/ux-polish` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability |
+| Next | **F10** — one crash-looping monitor takes every monitor down (found in this phase, open) |
+| Checks | `mix check` green: 725 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -888,6 +888,39 @@ first extracted into `TlsCheck.Certificate` so the fiddly part (two time formats
 and RFC 5280's two-digit-year pivot at 2049) is covered directly.
 
 
+### Phase 4 — UX: time windows, incident pagination, monitor health
+
+- **Time windows on a service.** Uptime and the percentiles read over 24 hours,
+  7 days or 30 days, chosen in the URL (`?window=7d`), so a view can be linked
+  and survives a reload; an unknown value falls back to 24 hours rather than
+  erroring. Thirty days used to mean aggregating a month of raw checks per page
+  view; with hourly rollups (ADR-010) it is cheap. The chart and the check bar
+  still show the last 60 probes whatever the window — and now say so.
+- **Incident pagination and filtering.** The list was the 50 most recent and
+  nothing else, so the 51st incident silently stopped existing on that page. It
+  is now paged 25 at a time and filterable to open or resolved, both in the URL.
+  One extra row is fetched to answer "is there another page?" without a count
+  query. **`started_at` has one-second resolution**, so incidents opened in the
+  same second had no order, and offset pagination over them showed some twice
+  and others never; `id` breaks the tie — the same lesson as F2. A live update
+  refreshes the page being read instead of bouncing the reader to page one.
+- **Monitor health.** `Monitoring.monitor_state/1` says whether anything is
+  actually watching a service: running, stopped, disabled, or not applicable
+  (monitors never run in the test suite, so their absence means nothing there).
+  An enabled service with no monitor now says "Nothing is watching this service"
+  instead of showing its last status as though it were current.
+- **The delete confirmation already existed.** The roadmap listed it as missing;
+  the services list had carried a `data-confirm` naming what goes with a service
+  since before this phase. It is now pinned by a test so it cannot quietly go.
+- **Building monitor health surfaced F10**, a real defect in the supervision
+  tree, not part of the original audit. `MonitorSupervisor`'s restart intensity
+  is supervisor-wide, so one monitor crashing six times in a minute terminates
+  the `DynamicSupervisor` with every monitor under it, and nothing starts them
+  again. Verified with a scratch script that killed one service's monitor seven
+  times and found a second, healthy service unwatched afterwards. **Not fixed
+  here**: it is a change to the supervision design. It is recorded as F10 in
+  `ROADMAP.md`, and `ARCHITECTURE.md` — which claimed the opposite — is corrected.
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -943,6 +976,17 @@ unique index (ADR-004) is already what makes the clustering step safe.
   *that* one unless the mailbox is drained after the fixtures and immediately
   before the assertion. Draining once in `setup` is not enough when a test
   creates more users than the setup did.
+- **Stopping a monitor mid-query breaks the shared sandbox for the rest of the
+  test.** A monitor's boot probe writes to the database within a second of it
+  starting. `stop_monitor/1` called in that window kills the process while it
+  holds the shared connection, the sandbox disconnects, and every later query in
+  the test fails with an `OwnershipError` naming the *test* process — nothing
+  about monitors. Start the monitor explicitly, `assert_receive` its
+  `{:check_recorded, _}`, then make a `ServiceMonitor.status/1` call to be sure
+  the callback returned, and only then stop it.
+- **A private helper called `path/3` is not called inside HEEx.** The
+  verified-routes import defines `path/3`, and in a template the import wins, so
+  the compiler reported a `~p` error about an argument the helper never had.
 - **Swoosh's `assert_email_sent/1` runs `assert fun.(email)`**, so the function
   has to end in something truthy — and `refute` evaluates to `false` even when it
   passes. A closure ending in a `refute` fails the assertion it is inside.

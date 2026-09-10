@@ -42,8 +42,20 @@ Each `ServiceMonitor` is registered as `{:via, Registry, {PulseOps.Monitoring.Re
 {:monitor, service_id}}}`, so it can be found, restarted or stopped by service id.
 
 Monitors are `restart: :transient` under a `DynamicSupervisor` with bounded
-`max_restarts`. A monitor whose endpoint makes it crash repeatedly is given up on
-without affecting any other monitor — fault isolation is the point of the design.
+`max_restarts`. **That bound does not isolate one monitor from another, and this
+section used to claim it did.** `max_restarts: 5, max_seconds: 60` is the
+intensity of the whole `DynamicSupervisor`, not a budget per child: one monitor
+crashing six times inside a minute exceeds it, and the supervisor terminates
+itself with every monitor under it. `Monitoring.Supervisor` restarts it empty,
+and `Bootstrapper` — which did not crash — does not run again, so every service
+goes unwatched until the application restarts. Verified by killing one service's
+monitor seven times: the other service's monitor was gone afterwards. This is
+open; see F10 in `ROADMAP.md`.
+
+What is in place is that the failure is no longer invisible. An enabled service
+whose monitor is not running says "Nothing is watching this service" on its page
+(`Monitoring.monitor_state/1`), instead of showing its last recorded status as
+though it were current.
 
 A monitor reads its alert rule at boot, and the context casts to every monitor
 whose rule changed so each re-reads it in its own process — the new thresholds

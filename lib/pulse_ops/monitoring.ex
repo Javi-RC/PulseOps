@@ -483,6 +483,36 @@ defmodule PulseOps.Monitoring do
     |> Map.new(fn {service_id, %{total: total, up: up}} -> {service_id, up / total * 100} end)
   end
 
+  ## Monitor health
+
+  @doc """
+  Whether anything is actually watching a service.
+
+    * `:running` — a monitor process exists for it.
+    * `:stopped` — it is enabled and nothing is watching it. In practice that is
+      a monitor that crashed too often inside its supervisor's restart window
+      and was given up on. Giving up is the right call for fault isolation, and
+      until now it was invisible: the service went on showing its last recorded
+      status as though it were current.
+    * `:disabled` — monitoring was switched off on purpose.
+    * `:not_applicable` — monitors do not run in this environment at all (the
+      test suite, ADR-005), so their absence says nothing.
+
+  Reads the local registry, so on a second node it would only answer for that
+  node — one more reason the deployment is single-node (see "Deployment shape"
+  in `ARCHITECTURE.md`).
+  """
+  @spec monitor_state(Service.t()) :: :running | :stopped | :disabled | :not_applicable
+  def monitor_state(%Service{enabled: false}), do: :disabled
+
+  def monitor_state(%Service{id: id}) do
+    cond do
+      not MonitorSupervisor.enabled?() -> :not_applicable
+      ServiceMonitor.whereis(id) -> :running
+      true -> :stopped
+    end
+  end
+
   ## TLS certificates
 
   @doc """

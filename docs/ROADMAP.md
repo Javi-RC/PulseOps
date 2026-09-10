@@ -187,6 +187,27 @@ image. `force_ssl` is still commented out in `runtime.exs`.
 
 Files: `config/runtime.exs`, `Dockerfile.dev`
 
+### F10 — One crash-looping monitor takes every monitor down
+
+**Found on 2026-09-10 while building monitor-health visibility, and verified by
+running it** — not part of the original audit.
+
+`MonitorSupervisor`'s `max_restarts: 5, max_seconds: 60` is the intensity of the
+whole `DynamicSupervisor`, not a per-child budget. One monitor crashing six times
+in a minute exceeds it: the supervisor terminates itself and every monitor under
+it. `Monitoring.Supervisor` (`:one_for_one`) restarts it empty and `Bootstrapper`
+does not run again, so **every service in every organization goes unwatched**
+until the application restarts. Killing one service's monitor seven times left a
+second, healthy service with no monitor.
+
+This contradicts what this audit listed as the strongest part of the system
+("real fault isolation"). A crashing *probe* does not trigger it — probes run
+under `async_nolink` — but anything that crashes the monitor process itself does,
+and a crash at boot repeats on every restart.
+
+Files: `lib/pulse_ops/monitoring/monitor_supervisor.ex`,
+`lib/pulse_ops/monitoring/supervisor.ex`
+
 ---
 
 ## Technical debt
@@ -274,8 +295,10 @@ Behave like an actual on-call tool.
 - [x] Maintenance windows and silencing
 - [x] Anti-flapping, notification grouping, escalation
 - [x] TLS certificate expiry watching
-- [ ] UX: time-window selector, destructive-delete confirmation, incident
-      pagination, monitor-health visibility
+- [x] UX: time-window selector, destructive-delete confirmation, incident
+      pagination, monitor-health visibility — the delete confirmation already
+      existed by the time this was picked up; it is now pinned by a test.
+      Building monitor-health visibility is what surfaced **F10**.
 
 ---
 

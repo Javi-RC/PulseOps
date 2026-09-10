@@ -267,6 +267,39 @@ defmodule PulseOps.Incidents do
   end
 
   @doc """
+  One page of the scoped organization's incidents, newest first, optionally
+  narrowed to the open or the resolved ones.
+
+  Fetches one row more than a page holds and drops it, which answers "is there
+  another page?" without a second query to count everything.
+  """
+  @spec page_incidents(Scope.t(), keyword()) :: %{entries: [Incident.t()], has_more?: boolean()}
+  def page_incidents(%Scope{} = scope, opts \\ []) do
+    per_page = Keyword.get(opts, :per_page, 25)
+    page = max(Keyword.get(opts, :page, 1), 1)
+
+    rows =
+      scope
+      |> incidents_query()
+      |> filter_status(Keyword.get(opts, :status, :all))
+      # started_at has one-second resolution, so incidents opened in the same
+      # second have no order of their own — and offset pagination over rows
+      # with no stable order shows some twice and others never. The id breaks
+      # the tie, for the same reason the alert-rule lookup needed one (F2).
+      |> order_by([i], desc: i.started_at, desc: i.id)
+      |> limit(^(per_page + 1))
+      |> offset(^((page - 1) * per_page))
+      |> preload(:service)
+      |> Repo.all()
+
+    %{entries: Enum.take(rows, per_page), has_more?: length(rows) > per_page}
+  end
+
+  defp filter_status(query, :open), do: where(query, [i], is_nil(i.resolved_at))
+  defp filter_status(query, :resolved), do: where(query, [i], not is_nil(i.resolved_at))
+  defp filter_status(query, :all), do: query
+
+  @doc """
   The unresolved incidents in the scoped organization, most severe first.
   """
   def list_active_incidents(%Scope{} = scope) do
