@@ -143,7 +143,8 @@ organizations ──┬── organization_members ──── users
   certificate running out needs a calendar entry rather than a page (ADR-016).
 - `services` — name, description, environment, url, `check_interval_ms`,
   `timeout_ms`, `enabled`, `public`, current `status`, `last_checked_at`, plus
-  how to make the request: `http_method`, `request_headers`, `request_body`,
+  how to make the request: `http_method`, `request_headers` (encrypted at rest,
+  ADR-018), `request_body`,
   and what counts as healthy — `expected_status` (null means any 2xx) and
   `body_assertion` (null means the body is not read).
 - `alert_rules` — failure/success thresholds and a severity for incident handling;
@@ -178,7 +179,7 @@ organizations ──┬── organization_members ──── users
   `:investigating` says something about the incident, acknowledging says
   somebody has it, and in the first minute both are true (ADR-015).
 - `notifiers` — where an organization is told about incidents: a `:webhook` (URL +
-  optional bearer `secret_token`) or an `:email`, with `enabled` to pause without
+  optional bearer `secret_token`, encrypted at rest — ADR-018) or an `:email`, with `enabled` to pause without
   deleting. A notifier is `:organization`-scoped and may be narrowed to a single
   `service_id` (nil = any incident in the organization). Email notifiers reach the
   organization users linked through `notifier_assignments`, one copy each; for

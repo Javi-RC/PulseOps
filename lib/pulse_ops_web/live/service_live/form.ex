@@ -20,6 +20,10 @@ defmodule PulseOpsWeb.ServiceLive.Form do
     "timeout_seconds" => "timeout_ms"
   }
 
+  # Shown in place of every header value. Not ASCII, so the changeset refuses it
+  # if it is ever submitted for a header with no value to stand for.
+  @mask "••••••"
+
   @impl true
   def mount(params, _session, socket) do
     {:ok,
@@ -37,6 +41,7 @@ defmodule PulseOpsWeb.ServiceLive.Form do
     socket
     |> assign(:page_title, "Edit service")
     |> assign(:service, service)
+    |> assign(:known_headers, service.request_headers || %{})
     |> assign_form(Monitoring.change_service(socket.assigns.current_scope, service))
   end
 
@@ -46,23 +51,23 @@ defmodule PulseOpsWeb.ServiceLive.Form do
     socket
     |> assign(:page_title, "New service")
     |> assign(:service, service)
+    |> assign(:known_headers, %{})
     |> assign_form(Monitoring.change_service(socket.assigns.current_scope, service))
   end
 
   @impl true
   def handle_event("validate", %{"service" => params}, socket) do
+    {params, socket} = to_schema_params(params, socket)
+
     changeset =
-      Monitoring.change_service(
-        socket.assigns.current_scope,
-        socket.assigns.service,
-        to_schema_params(params)
-      )
+      Monitoring.change_service(socket.assigns.current_scope, socket.assigns.service, params)
 
     {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
   end
 
   def handle_event("save", %{"service" => params}, socket) do
-    save_service(socket, socket.assigns.live_action, to_schema_params(params))
+    {params, socket} = to_schema_params(params, socket)
+    save_service(socket, socket.assigns.live_action, params)
   end
 
   defp save_service(socket, :edit, params) do
@@ -99,8 +104,8 @@ defmodule PulseOpsWeb.ServiceLive.Form do
 
   # Everything the form speaks differently from the schema is translated here,
   # in one place, rather than scattered through the template.
-  defp to_schema_params(params) do
-    params |> to_milliseconds() |> to_header_map()
+  defp to_schema_params(params, socket) do
+    params |> to_milliseconds() |> to_header_map(socket)
   end
 
   # Headers are a textarea of `Name: value` lines, because a map is not a thing
@@ -110,7 +115,14 @@ defmodule PulseOpsWeb.ServiceLive.Form do
   # A line with no colon becomes a name with an empty value, which is a legal
   # header — and if it is not a valid header name the changeset says so, which
   # is how a line the user meant as prose gets a useful error.
-  defp to_header_map(%{"request_headers_text" => text} = params) do
+  #
+  # Values are never rendered back (they are often credentials), so a line
+  # still carrying the mask stands for the value already known for that name:
+  # the stored one, or one typed earlier in this session and masked on a
+  # re-render. Those known values live in the socket, never in the page.
+  defp to_header_map(%{"request_headers_text" => text} = params, socket) do
+    known = socket.assigns.known_headers
+
     headers =
       text
       |> to_string()
@@ -119,17 +131,25 @@ defmodule PulseOpsWeb.ServiceLive.Form do
       |> Enum.reject(&(&1 == ""))
       |> Map.new(fn line ->
         case String.split(line, ":", parts: 2) do
-          [name, value] -> {String.trim(name), String.trim(value)}
+          [name, value] -> resolve_header(String.trim(name), String.trim(value), known)
           [name] -> {String.trim(name), ""}
         end
       end)
 
-    params
-    |> Map.delete("request_headers_text")
-    |> Map.put("request_headers", headers)
+    params =
+      params
+      |> Map.delete("request_headers_text")
+      |> Map.put("request_headers", headers)
+
+    typed = Map.reject(headers, fn {_name, value} -> value == @mask end)
+    {params, assign(socket, :known_headers, Map.merge(known, typed))}
   end
 
-  defp to_header_map(params), do: params
+  defp to_header_map(params, socket), do: {params, socket}
+
+  # A mask with nothing behind it is left in place for the changeset to refuse.
+  defp resolve_header(name, @mask, known), do: {name, Map.get(known, name, @mask)}
+  defp resolve_header(name, value, _known), do: {name, value}
 
   # The schema keeps milliseconds; the form speaks seconds.
   defp to_milliseconds(params) do
@@ -162,14 +182,18 @@ defmodule PulseOpsWeb.ServiceLive.Form do
     end)
   end
 
-  # The stored map, back in the shape the textarea shows. Sorted so editing a
-  # service does not reshuffle the lines under the cursor.
+  # The stored map, back in the shape the textarea shows — names only, with every
+  # non-empty value masked. Sorted so editing a service does not reshuffle the
+  # lines under the cursor.
   defp headers_text(form) do
     case Form.input_value(form, :request_headers) do
       headers when is_map(headers) and map_size(headers) > 0 ->
         headers
         |> Enum.sort_by(fn {name, _value} -> name end)
-        |> Enum.map_join("\n", fn {name, value} -> "#{name}: #{value}" end)
+        |> Enum.map_join("\n", fn
+          {name, ""} -> "#{name}:"
+          {name, _value} -> "#{name}: #{@mask}"
+        end)
 
       _none ->
         ""
@@ -331,8 +355,8 @@ defmodule PulseOpsWeb.ServiceLive.Form do
                   placeholder="Authorization: Bearer ..."
                 />
                 <p class="mt-1 text-xs text-base-content/50">
-                  One per line, as <code>Name: value</code>. Stored as written, so a token here
-                  sits in the database in plain text.
+                  One per line, as <code>Name: value</code>. Values are encrypted and never
+                  shown again: leave <code>••••••</code> to keep one, or type a new value.
                 </p>
                 <p :for={message <- header_errors(@form)} class="mt-1 text-sm text-error">
                   {message}

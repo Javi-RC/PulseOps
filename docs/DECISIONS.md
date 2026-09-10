@@ -634,9 +634,15 @@ There is no re-keying tool yet — it would be a small task if rotation becomes
 routine. The migration converts existing rows in Elixir, because the key must
 never appear in SQL, and therefore depends on `PulseOps.Vault`.
 
-`services.request_headers` has the same exposure — an `Authorization` header on
-a check is plain text — and is recorded as its own debt item rather than folded
-in here, because it is a map rendered as editable rows, not a single field.
+**The same decision covers `services.request_headers`**, which is where an
+`Authorization` header for a check lives. The map is JSON-encoded and encrypted
+(`Vault.EncryptedMap`) and redacted. The service form shows header *names* with
+every value masked, because it cannot know which header is a credential; a line
+left masked keeps the value already known for that name, resolved in the
+LiveView's assigns and never sent to the page — including a value typed a moment
+ago and masked by a re-render. Header values must be printable ASCII, as HTTP
+requires, which also guarantees a mask with nothing behind it is refused rather
+than sent.
 
 ---
 

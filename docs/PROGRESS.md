@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/tech-debt` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
-| Next | `services.request_headers` in plain text, then rate limiting on login and registration |
-| Checks | `mix check` green: 742 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | Rate limiting on login and registration |
+| Checks | `mix check` green: 747 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -977,6 +977,34 @@ the reason each names — plain text in the column, the token in the edit page, 
 before migrating came out as `bytea` with no trace of the plain text, the app
 read it back decrypted, rolling back restored the plain text as `varchar`, and
 migrating again re-encrypted it.
+
+### Technical debt — service request headers
+
+- **Encrypted at rest** under the same vault (ADR-018): `request_headers` is a
+  `Vault.EncryptedMap`, JSON inside the ciphertext, redacted from `inspect`. The
+  migration converts every row, empty maps included, because the column stays
+  `NOT NULL` and no database default can be a ciphertext.
+- **Values are never rendered.** The textarea shows `Name: ••••••` for every
+  header — the form cannot tell a credential from `X-Probe`. A masked line keeps
+  the value already known for that name; typing replaces it; deleting the line
+  removes the header.
+- **Known values live in the socket.** A value typed into a new service is
+  masked by the next re-render, so the LiveView keeps what was typed in its
+  assigns and resolves the mask against it on save. Without that, touching any
+  other field after typing a header would have lost the header.
+- **Header values must be printable ASCII**, as HTTP requires. It is also what
+  makes a mask with nothing behind it — a renamed header — an error instead of
+  six bullets sent to the far side.
+
+**Verified by tests first.** Six tests failed against the old code, one of them
+the existing test that asserted the leak ("shows the stored headers back as
+text"), now rewritten to assert the opposite.
+
+**Verified against the development database:** a service inserted with a
+plain-text `Authorization` header in `jsonb` came out as `bytea` with no trace of
+it, every existing service row was converted, the app read the header back
+decrypted and hidden from `inspect`, rolling back restored the original `jsonb`,
+and migrating again re-encrypted it.
 
 ## Next steps
 
