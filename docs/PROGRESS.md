@@ -1066,6 +1066,14 @@ unique index (ADR-004) is already what makes the clustering step safe.
   enough that the chart crashed on any real data; `round2/1` coerces first. The
   LiveView tests missed it because none of them rendered a service that had
   checks — there is now one that does.
+- **`/dev/flaky` answered 401 to every probe from the JSON API commit on.** It was
+  routed through the `:api` pipeline to dodge CSRF, and that pipeline later gained
+  `ApiAuth`. Dev routes are not compiled in the test environment, so no test
+  could notice; a scenario that breaks the endpoint cannot either, because a 401
+  is a failure too. It surfaced only when the F10 scenario needed a bystander
+  service to stay *healthy*. The endpoint now has a pipeline of its own that
+  only accepts JSON. A route borrowing a pipeline for one plug inherits every
+  plug added to it later.
 
 ## Open questions
 
