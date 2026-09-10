@@ -181,4 +181,39 @@ defmodule PulseOpsWeb.IncidentLiveTest do
     |> Ecto.Changeset.change(role: :viewer)
     |> Repo.update!()
   end
+
+  describe "acknowledging from the incident page" do
+    test "marks it, says who has it, and hides the button", %{conn: conn, scope: scope} do
+      service = service_fixture(scope)
+      incident = incident_fixture(service)
+
+      {:ok, live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/incidents/#{incident.id}")
+
+      assert html =~ "Acknowledge"
+
+      html = live |> element("button", "Acknowledge") |> render_click()
+
+      assert html =~ "will not escalate"
+      assert html =~ scope.user.email
+      assert Repo.reload!(incident).acknowledged_at
+    end
+
+    test "a viewer is not offered it", %{conn: conn, scope: scope, user: user} do
+      service = service_fixture(scope)
+      incident = incident_fixture(service)
+
+      Repo.get_by!(PulseOps.Organizations.Membership,
+        organization_id: scope.organization.id,
+        user_id: user.id
+      )
+      |> Ecto.Changeset.change(role: :viewer)
+      |> Repo.update!()
+
+      {:ok, _live, html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/incidents/#{incident.id}")
+
+      refute html =~ "Acknowledge"
+    end
+  end
 end

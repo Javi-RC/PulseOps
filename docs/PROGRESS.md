@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | Phase 3 of [`ROADMAP.md`](ROADMAP.md) complete — product surface (v0.5.0) |
-| Next | Phase 4 of [`ROADMAP.md`](ROADMAP.md) — operational reliability |
-| Checks | `mix check` green: 600 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/per-service-supervision` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability, and F10 fixed |
+| Next | Release Phase 4 as `v0.6.0` |
+| Checks | `mix check` green: 729 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -784,6 +784,178 @@ account**, the POST creating a confirmed account and a membership, and a second
 POST refused.
 
 
+### Phase 4 — maintenance windows
+
+- A planned deploy looked exactly like an outage: probes fail, an incident
+  opens, everyone on the notifier list is woken up for something somebody
+  scheduled. The roadmap calls this the number one failure of any alerting
+  system in real use.
+- A window is a time range, optionally narrowed to one service. **Probes still
+  run, checks are still recorded, the status still changes** — what is held back
+  is the incident. Stopping the checks would leave a hole in the history exactly
+  where somebody later asks "was it already broken before the deploy?".
+- **The check is in `Incidents`, not in `transition/3`.** The roadmap said the
+  transition is the single gate, and it *was* — until F1 gave incidents a second
+  way to open. Suppressing only the transition would have silenced new outages
+  and not the one the window was scheduled for, because a service already down
+  would get an incident from reconciliation on its next probe. Both paths funnel
+  into `insert_incident/4`. See **ADR-014**.
+- **Nothing schedules the end of the silence.** When a window finishes with the
+  service still broken, the next probe reconciles and opens an incident then,
+  carrying a `:reopened` event. That is F1 paying for itself — the roadmap
+  expected Oban here and no job is needed.
+- Notification suppression falls out of it rather than being a second rule: no
+  incident opened, so there is nothing to announce. A *recovery* during a window
+  is still announced, because that is not a page in the night.
+- The public status page announces a running window and marks the services it
+  covers, and its banner says "Down for planned maintenance" rather than
+  crying outage.
+- Windows are capped at 31 days, validated against the tenant like alert rules
+  and notifiers, and a database constraint refuses one that ends before it
+  starts.
+- **A test caught a real bug**: a window aimed at a service the status page does
+  not publish was still putting that service's id into the map the page reads by
+  id. The coverage assertion had started life as a brittle substring count in the
+  web test; moving it to the context, where it could be precise, is what found it.
+
+**Verified against the running app** with
+`priv/scenarios/maintenance_windows.exs`: `/dev/flaky` genuinely broken, probes
+genuinely failing, the service genuinely reading down — **and no incident**. Then
+the window is cancelled and the very next probe opens one, by reconciliation.
+
+
+### Phase 4 — anti-flapping, digests and escalation
+
+- `enqueue_incident_notifications/3` fired 1:1 with no suppression, so a service
+  sitting on its threshold produced a storm, and there was no way to say
+  "somebody is on this" or "nobody is, make more noise".
+- **Flap detection counts incidents, not raw checks.** Every threshold crossing
+  already produces one incident row with a `started_at`, so counting those is one
+  indexed query and no new bookkeeping — and it measures *the thing people
+  actually receive* rather than oscillations nobody was told about.
+- A flapping service stops sending per-incident messages and schedules one
+  `DigestJob`, **unique per service**, so everything arriving while it waits
+  collapses into it. Nine crossings became one message in the scenario.
+- **The digest counts when it runs, not when it was scheduled.** At schedule time
+  only the first crossing has happened; the interesting number is the total.
+- **Escalation is decided at the end, not cancelled at the start.** A critical
+  incident schedules an `EscalationJob`; when it runs it re-reads the incident and
+  does nothing unless it is still open and still unacknowledged. Cancelling a
+  scheduled job instead would mean getting it right in three places — acknowledge,
+  resolve and automatic recovery — and this is one check in one place.
+- **Acknowledgement is its own field, not a workflow status.** `:investigating`
+  says something about the incident; acknowledging says somebody has it. In the
+  first minute both are true and neither implies the other. See **ADR-015**.
+- `notifiers.escalation_only` keeps a channel quiet for ordinary incidents. An
+  escalation reaches **everybody**, including the people already told — nobody
+  picked it up, so more noise is the intent.
+
+**Verified against the running app** with
+`priv/scenarios/flapping_and_escalation.exs`: the first line paged and the second
+silent, eight further crossings producing exactly one digest, the escalation
+reaching the escalation-only channel, and acknowledging making a re-run send
+nothing.
+
+
+### Phase 4 — TLS certificate expiry
+
+- An expired certificate takes a service down as surely as a crashed process,
+  and it is the one outage that announces itself weeks in advance to anybody who
+  looks. Nothing was looking.
+- A daily Oban job reads every enabled `https` service's certificate and stores
+  the expiry. **Daily, not per probe**: a certificate changes at most once in its
+  life, and per-probe would be a handshake every thirty seconds to learn a date
+  that moves once a quarter.
+- **The handshake does not verify the certificate.** That looks alarming and is
+  the point: an expired, self-signed or wrong-name certificate all fail
+  verification, and those are exactly the cases somebody needs told about.
+  Verified against `expired.badssl.com`, which returned `2015-04-12` — a date a
+  verifying connection could not have produced. See **ADR-016**.
+- **It does not open an incident.** The service is up. An incident would put a
+  false outage in the uptime figures and page somebody for what needs a calendar
+  entry. It goes out through the ordinary channels with its own webhook event.
+- `tls_warned_for` stores **which** expiry was warned about, not a boolean.
+  Renewing moves the expiry, so the next one warns in its turn; a flag would
+  either repeat daily or go silent for ever after the first time.
+- The service page shows a notice inside the window, red once expired, and says
+  the service itself is fine so it does not read as an outage.
+
+**Coverage caught two real gaps rather than one nuisance.** Adding this dropped
+the total to 88.92% and `mix test --cover` exited 3, as it is supposed to. Two of
+the three uncovered modules were the email and the delivery job — genuinely
+untested, now tested. Only the socket module is excluded, and its parsing was
+first extracted into `TlsCheck.Certificate` so the fiddly part (two time formats
+and RFC 5280's two-digit-year pivot at 2049) is covered directly.
+
+
+### Phase 4 — UX: time windows, incident pagination, monitor health
+
+- **Time windows on a service.** Uptime and the percentiles read over 24 hours,
+  7 days or 30 days, chosen in the URL (`?window=7d`), so a view can be linked
+  and survives a reload; an unknown value falls back to 24 hours rather than
+  erroring. Thirty days used to mean aggregating a month of raw checks per page
+  view; with hourly rollups (ADR-010) it is cheap. The chart and the check bar
+  still show the last 60 probes whatever the window — and now say so.
+- **Incident pagination and filtering.** The list was the 50 most recent and
+  nothing else, so the 51st incident silently stopped existing on that page. It
+  is now paged 25 at a time and filterable to open or resolved, both in the URL.
+  One extra row is fetched to answer "is there another page?" without a count
+  query. **`started_at` has one-second resolution**, so incidents opened in the
+  same second had no order, and offset pagination over them showed some twice
+  and others never; `id` breaks the tie — the same lesson as F2. A live update
+  refreshes the page being read instead of bouncing the reader to page one.
+- **Monitor health.** `Monitoring.monitor_state/1` says whether anything is
+  actually watching a service: running, stopped, disabled, or not applicable
+  (monitors never run in the test suite, so their absence means nothing there).
+  An enabled service with no monitor now says "Nothing is watching this service"
+  instead of showing its last status as though it were current.
+- **The delete confirmation already existed.** The roadmap listed it as missing;
+  the services list had carried a `data-confirm` naming what goes with a service
+  since before this phase. It is now pinned by a test so it cannot quietly go.
+- **Building monitor health surfaced F10**, a real defect in the supervision
+  tree, not part of the original audit. `MonitorSupervisor`'s restart intensity
+  is supervisor-wide, so one monitor crashing six times in a minute terminates
+  the `DynamicSupervisor` with every monitor under it, and nothing starts them
+  again. Verified with a scratch script that killed one service's monitor seven
+  times and found a second, healthy service unwatched afterwards. **Not fixed
+  here**: it is a change to the supervision design. It is recorded as F10 in
+  `ROADMAP.md`, and `ARCHITECTURE.md` — which claimed the opposite — is corrected.
+  Fixed in its own commit, next section.
+
+### Stabilisation — F10: a restart budget per service
+
+- **Each monitor has a supervisor of its own** (ADR-017). `MonitorSupervisor`
+  starts one `MonitorContainer` per service as a temporary child; the container
+  supervises that service's `ServiceMonitor` with `max_restarts: 5,
+  max_seconds: 60`. Those were always the right numbers — they were attached to
+  the supervisor every monitor shared, so they were a budget for all of them
+  together.
+- **A container that gives up stays down.** Being temporary, it is never
+  restarted and never counted against `MonitorSupervisor`. The service reads as
+  "Nothing is watching this service" until it is edited.
+- **A monitor that stops normally takes its container with it.** It is a
+  significant child and the container has `auto_shutdown: :any_significant`, so
+  a deleted service does not leave an empty container holding its name.
+- **"Watched" means a container exists**, not a monitor. A monitor restarting
+  inside its budget is briefly unregistered, and the service page should not
+  flicker to "stopped" for that.
+
+**Verified by tests, including against the bug.** The regression test kills one
+service's monitor five times (each restarted), then a sixth (given up on), and
+asserts the other service's monitor is the *same pid* under the *same*
+`MonitorSupervisor`. With `MonitorSupervisor` temporarily put back to starting
+monitors directly under a shared 5/60 budget, it failed with the other monitor
+gone — which is F10. The first version of the test did not fail that way; see
+the trap below.
+
+**Verified against the running app** with `priv/scenarios/f10_isolation.exs`:
+two real services probing `/dev/flaky`, one monitor killed five times (restarted
+each time) and a sixth (given up on, reported "not watched"), while the other
+kept the same pid under the same `MonitorSupervisor` and recorded a healthy probe
+afterwards; editing the given-up service watched it again. Needing that second
+service to stay *healthy* is what exposed `/dev/flaky` answering 401 — fixed in
+the commit before this one.
+
 ## Next steps
 
 **See [`ROADMAP.md`](ROADMAP.md).** A full audit of the codebase on 2026-09-09
@@ -834,6 +1006,40 @@ unique index (ADR-004) is already what makes the clustering step safe.
   *changes*, so they alternated by construction no matter what the state machine
   did. Mutating the implementation is the cheap way to find this out: if
   weakening the code does not fail the property, the property was decoration.
+- **A Swoosh mailbox is per test process and keeps everything.** Every fixture
+  user that registers sends a confirmation email, so `assert_email_sent/1` reads
+  *that* one unless the mailbox is drained after the fixtures and immediately
+  before the assertion. Draining once in `setup` is not enough when a test
+  creates more users than the setup did.
+- **Stopping a monitor mid-query breaks the shared sandbox for the rest of the
+  test.** A monitor's boot probe writes to the database within a second of it
+  starting. `stop_monitor/1` called in that window kills the process while it
+  holds the shared connection, the sandbox disconnects, and every later query in
+  the test fails with an `OwnershipError` naming the *test* process — nothing
+  about monitors. Start the monitor explicitly, `assert_receive` its
+  `{:check_recorded, _}`, then make a `ServiceMonitor.status/1` call to be sure
+  the callback returned, and only then stop it.
+- **A regression test that reads the fix's own structure cannot catch the bug.**
+  The first F10 test decided "given up" by the container being absent. Against
+  the old code there were no containers at all, so it concluded "given up" after
+  the first kill, stopped, and passed with the bystander untouched. Waiting only
+  on things both versions have — the monitor's own name — and killing exactly six
+  times is what made it fail against the bug. Run the test against the unfixed
+  code before trusting it.
+- **`GenServer.stop/2` returning does not mean the name is free.** The registry
+  drops the entry when it handles the `:DOWN`, so `ServiceMonitor.whereis/1` can
+  still return the dead pid for a moment afterwards.
+- **A private helper called `path/3` is not called inside HEEx.** The
+  verified-routes import defines `path/3`, and in a template the import wins, so
+  the compiler reported a `~p` error about an argument the helper never had.
+- **Swoosh's `assert_email_sent/1` runs `assert fun.(email)`**, so the function
+  has to end in something truthy — and `refute` evaluates to `false` even when it
+  passes. A closure ending in a `refute` fails the assertion it is inside.
+- **`mix check`'s last line is Dialyzer's, not the suite's.** Grepping for
+  "passed successfully" reported success while `mix test --cover` had already
+  exited 3 on the coverage threshold. Check the exit status, not the prose.
+- **`Oban.Testing.perform_job/3` calls the worker directly** and does not consume
+  the scheduled row, so a job stays queued after it has been run in a test.
 - **Application env is global, so a test that flips it cannot be `async: true`.**
   `UrlGuardTest` toggles `:allow_private_targets` and, while async, failed
   unrelated modules whose fixtures were saving a service URL at that moment. The
@@ -905,6 +1111,14 @@ unique index (ADR-004) is already what makes the clustering step safe.
   enough that the chart crashed on any real data; `round2/1` coerces first. The
   LiveView tests missed it because none of them rendered a service that had
   checks — there is now one that does.
+- **`/dev/flaky` answered 401 to every probe from the JSON API commit on.** It was
+  routed through the `:api` pipeline to dodge CSRF, and that pipeline later gained
+  `ApiAuth`. Dev routes are not compiled in the test environment, so no test
+  could notice; a scenario that breaks the endpoint cannot either, because a 401
+  is a failure too. It surfaced only when the F10 scenario needed a bystander
+  service to stay *healthy*. The endpoint now has a pipeline of its own that
+  only accepts JSON. A route borrowing a pipeline for one plug inherits every
+  plug added to it later.
 
 ## Open questions
 

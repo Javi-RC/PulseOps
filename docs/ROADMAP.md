@@ -187,6 +187,34 @@ image. `force_ssl` is still commented out in `runtime.exs`.
 
 Files: `config/runtime.exs`, `Dockerfile.dev`
 
+### F10 — One crash-looping monitor takes every monitor down
+
+**Found on 2026-09-10 while building monitor-health visibility, and verified by
+running it** — not part of the original audit.
+
+`MonitorSupervisor`'s `max_restarts: 5, max_seconds: 60` is the intensity of the
+whole `DynamicSupervisor`, not a per-child budget. One monitor crashing six times
+in a minute exceeds it: the supervisor terminates itself and every monitor under
+it. `Monitoring.Supervisor` (`:one_for_one`) restarts it empty and `Bootstrapper`
+does not run again, so **every service in every organization goes unwatched**
+until the application restarts. Killing one service's monitor seven times left a
+second, healthy service with no monitor.
+
+This contradicts what this audit listed as the strongest part of the system
+("real fault isolation"). A crashing *probe* does not trigger it — probes run
+under `async_nolink` — but anything that crashes the monitor process itself does,
+and a crash at boot repeats on every restart.
+
+Files: `lib/pulse_ops/monitoring/monitor_supervisor.ex`,
+`lib/pulse_ops/monitoring/supervisor.ex`
+
+**Fixed** by giving each monitor its own supervisor, `MonitorContainer`, with the
+restart budget the shared one only claimed to have; containers are temporary, so
+a service that exceeds its budget stays down on its own (ADR-017). The regression
+test kills one monitor six times and asserts the other monitor is the same
+process under the same `MonitorSupervisor` — run against the old supervisor, it
+fails with the other monitor gone.
+
 ---
 
 ## Technical debt
@@ -271,11 +299,15 @@ Turn the engine into something other people interact with.
 
 Behave like an actual on-call tool.
 
-- [ ] Maintenance windows and silencing
-- [ ] Anti-flapping, notification grouping, escalation
-- [ ] TLS certificate expiry watching
-- [ ] UX: time-window selector, destructive-delete confirmation, incident
-      pagination, monitor-health visibility
+- [x] Maintenance windows and silencing
+- [x] Anti-flapping, notification grouping, escalation
+- [x] TLS certificate expiry watching
+- [x] UX: time-window selector, destructive-delete confirmation, incident
+      pagination, monitor-health visibility — the delete confirmation already
+      existed by the time this was picked up; it is now pinned by a test.
+      Building monitor-health visibility is what surfaced **F10**.
+- [x] **F10** A restart budget per service: one crash-looping monitor no longer
+      takes every other monitor down
 
 ---
 

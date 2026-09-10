@@ -15,6 +15,10 @@ defmodule PulseOps.StatusPage do
       `status_page_enabled` is set, and a service appears only while its own
       `public` flag is set.
 
+    * **Planned work is announced, not hidden.** A running maintenance window is
+      published — a status page that shows a service down without saying it was
+      scheduled is the version that generates support tickets.
+
     * **The queries select the safe columns by name.** A service's `url` is the
       whole point of an SSRF guard existing and is often an internal hostname;
       an incident's `cause` and its timeline are written by staff for staff.
@@ -26,6 +30,7 @@ defmodule PulseOps.StatusPage do
 
   alias PulseOps.Accounts.Scope
   alias PulseOps.Incidents.Incident
+  alias PulseOps.Maintenance
   alias PulseOps.Monitoring
   alias PulseOps.Monitoring.Service
   alias PulseOps.Organizations.Organization
@@ -64,14 +69,36 @@ defmodule PulseOps.StatusPage do
     ids = Enum.map(services, & &1.id)
     scope = Scope.for_public_organization(organization)
 
+    windows = Maintenance.active_windows(organization)
+
     %{
       services: services,
       uptime: Map.take(Monitoring.uptime_by_service(scope), ids),
       history: Map.take(Monitoring.recent_checks_by_service(scope), ids),
       active_incidents: list_incidents(organization, ids, :active),
       past_incidents: list_incidents(organization, ids, :past),
+      maintenance: windows,
+      maintenance_by_service: maintenance_by_service(windows, ids),
       overall: overall_status(services)
     }
+  end
+
+  # Which published services each running window covers. A window with no
+  # service_id covers all of them, so it is expanded here rather than making the
+  # page work that out.
+  defp maintenance_by_service(windows, service_ids) do
+    Enum.reduce(windows, %{}, fn window, acc ->
+      # Intersected with what is published, not taken from the window: a window
+      # aimed at a service the page does not show must not put that service's id
+      # into a map the page reads by id.
+      covered =
+        case window.service_id do
+          nil -> service_ids
+          id -> Enum.filter(service_ids, &(&1 == id))
+        end
+
+      Enum.reduce(covered, acc, fn id, acc -> Map.put(acc, id, window) end)
+    end)
   end
 
   @doc """

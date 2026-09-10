@@ -364,4 +364,64 @@ defmodule PulseOpsWeb.ServiceLiveTest do
     |> Ecto.Changeset.change(role: :viewer)
     |> Repo.update!()
   end
+
+  describe "the TLS notice" do
+    setup %{scope: scope} do
+      %{service: service_fixture(scope, %{url: "https://api.example.com/health"})}
+    end
+
+    defp with_expiry(service, days) do
+      service
+      |> Ecto.Changeset.change(
+        tls_expires_at: DateTime.add(DateTime.utc_now(:second), days * 86_400, :second),
+        tls_checked_at: DateTime.utc_now(:second)
+      )
+      |> Repo.update!()
+    end
+
+    test "says nothing when the certificate has months left", %{
+      conn: conn,
+      scope: scope,
+      service: service
+    } do
+      with_expiry(service, 90)
+
+      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      refute html =~ "TLS certificate"
+    end
+
+    test "says nothing when it has never been checked", %{
+      conn: conn,
+      scope: scope,
+      service: service
+    } do
+      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      refute html =~ "TLS certificate"
+    end
+
+    test "warns inside the window", %{conn: conn, scope: scope, service: service} do
+      with_expiry(service, 9)
+
+      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      assert html =~ "TLS certificate expires in 8 days" or
+               html =~ "TLS certificate expires in 9 days"
+
+      # The service itself is fine, and the notice says so rather than reading
+      # like an outage. Asserted on a phrase that does not cross a line break in
+      # the template, since HEEx keeps the markup's newlines.
+      assert html =~ "Nothing is wrong with the service right now"
+    end
+
+    test "is louder once it has already expired", %{conn: conn, scope: scope, service: service} do
+      with_expiry(service, -3)
+
+      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}")
+
+      assert html =~ "expired"
+      assert html =~ "text-error"
+    end
+  end
 end

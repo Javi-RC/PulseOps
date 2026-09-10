@@ -85,7 +85,11 @@ config :pulse_ops, Oban,
        {"@daily", PulseOps.Accounts.PurgeExpiredTokensJob},
        # A few minutes past the hour, so the hour it rolls up is finished and
        # no checks are still landing in it.
-       {"5 * * * *", PulseOps.Monitoring.RollupJob}
+       {"5 * * * *", PulseOps.Monitoring.RollupJob},
+       # Certificates change at most once in their life, so once a day is
+       # plenty — and a handshake per probe would be one every thirty seconds
+       # per service to learn a date that moves once a quarter.
+       {"30 6 * * *", PulseOps.Monitoring.TlsJob}
      ]}
   ]
 
@@ -98,6 +102,27 @@ config :pulse_ops, :retention, checks_retention_days: 30
 # monitor waits this long before reopening it (see ADR-009). A real transition
 # back to :down is never suppressed — only the reconciliation path is.
 config :pulse_ops, :incident_reopen_grace_seconds, 300
+
+# Anti-flapping and escalation.
+#
+# `flap_*`: a service that opens this many incidents inside this window is
+# oscillating rather than broken. Its individual notifications stop and one
+# digest is sent instead, so a service sitting on its threshold produces a
+# message rather than a storm.
+#
+# `escalation_after_seconds`: how long a critical incident may sit
+# unacknowledged before the escalation-only channels are told. Nil switches
+# escalation off.
+config :pulse_ops, :notifications,
+  flap_threshold: 3,
+  flap_window_seconds: 600,
+  digest_delay_seconds: 300,
+  escalation_after_seconds: 900
+
+# TLS certificate watching. `warn_days` is how far ahead a certificate has to be
+# expiring before anybody is told — long enough to renew without hurrying, short
+# enough that the warning still means something when it arrives.
+config :pulse_ops, :tls, warn_days: 21
 
 # How long the dashboard waits before re-reading its summary after a broadcast.
 # Every message that lands inside the window is absorbed by the reload already

@@ -74,6 +74,8 @@ defmodule PulseOpsWeb.StatusPageLive do
     |> assign(:history, overview.history)
     |> assign(:active_incidents, overview.active_incidents)
     |> assign(:past_incidents, overview.past_incidents)
+    |> assign(:maintenance, overview.maintenance)
+    |> assign(:maintenance_by_service, overview.maintenance_by_service)
     |> assign(:overall, overview.overall)
   end
 
@@ -91,15 +93,34 @@ defmodule PulseOpsWeb.StatusPageLive do
 
         <section class={[
           "mb-8 flex items-center gap-3 rounded-box border p-4 sm:p-5",
-          overall_class(@overall)
+          banner_class(assigns, @overall)
         ]}>
-          <.icon name={overall_icon(@overall)} class="size-6 shrink-0" />
+          <.icon name={banner_icon(assigns, @overall)} class="size-6 shrink-0" />
           <div>
-            <p class="font-medium">{overall_headline(@overall)}</p>
+            <p class="font-medium">{headline(assigns, @overall)}</p>
             <p class="text-sm opacity-70">
               Updated <.relative_time at={latest_check(@services)} now={@now} />
             </p>
           </div>
+        </section>
+
+        <section :if={@maintenance != []} class="mb-8">
+          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
+            Planned maintenance
+          </h2>
+          <ul class="space-y-2">
+            <li
+              :for={window <- @maintenance}
+              class="rounded-box border border-info/40 bg-info/5 p-4"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-medium">{window.reason}</span>
+                <span class="text-sm text-base-content/60">
+                  until {Calendar.strftime(window.ends_at, "%d %b %H:%M")} UTC
+                </span>
+              </div>
+            </li>
+          </ul>
         </section>
 
         <section :if={@active_incidents != []} class="mb-8">
@@ -149,7 +170,15 @@ defmodule PulseOpsWeb.StatusPageLive do
                     {service.description}
                   </p>
                 </div>
-                <.status_badge status={service.status} />
+                <div class="flex items-center gap-2">
+                  <span
+                    :if={Map.has_key?(@maintenance_by_service, service.id)}
+                    class="badge badge-sm badge-info"
+                  >
+                    Maintenance
+                  </span>
+                  <.status_badge status={service.status} />
+                </div>
               </div>
 
               <div class="mt-3 flex flex-wrap items-center gap-4">
@@ -200,6 +229,22 @@ defmodule PulseOpsWeb.StatusPageLive do
       times -> Enum.max(times, DateTime)
     end
   end
+
+  # A service that is down inside a maintenance window is not an outage anybody
+  # needs to report, so the banner says so rather than shouting.
+  defp headline(%{maintenance: [_ | _]}, :down), do: "Down for planned maintenance"
+  defp headline(%{maintenance: [_ | _]}, :degraded), do: "Degraded during planned maintenance"
+  defp headline(_assigns, overall), do: overall_headline(overall)
+
+  defp banner_class(%{maintenance: [_ | _]}, overall) when overall in [:down, :degraded],
+    do: "border-info/40 bg-info/5 text-info"
+
+  defp banner_class(_assigns, overall), do: overall_class(overall)
+
+  defp banner_icon(%{maintenance: [_ | _]}, overall) when overall in [:down, :degraded],
+    do: "lucide-calendar-clock"
+
+  defp banner_icon(_assigns, overall), do: overall_icon(overall)
 
   defp overall_headline(:healthy), do: "All systems operational"
   defp overall_headline(:degraded), do: "Some systems are degraded"

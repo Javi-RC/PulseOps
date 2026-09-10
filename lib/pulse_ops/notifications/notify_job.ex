@@ -12,6 +12,10 @@ defmodule PulseOps.Notifications.NotifyJob do
 
   use Oban.Worker, queue: :default, max_attempts: 5
 
+  # "escalated" is the same delivery as "opened" with a different word on it:
+  # the incident has not changed, the fact that nobody picked it up has.
+  @events ["opened", "resolved", "escalated"]
+
   alias PulseOps.Incidents.Incident
   alias PulseOps.Notifications
   alias PulseOps.Notifications.IncidentNotifier
@@ -38,5 +42,5 @@ defmodule PulseOps.Notifications.NotifyJob do
   defp dispatch(%Notifier{type: :email} = notifier, incident, event),
     do: IncidentNotifier.deliver(notifier, incident, event)
 
-  defp event(%{"event" => event}) when event in ["opened", "resolved"], do: event
+  defp event(%{"event" => event}) when event in @events, do: event
 end
