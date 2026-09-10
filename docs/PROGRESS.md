@@ -7,10 +7,10 @@ of each phase. **Read this first when picking the work back up.**
 
 | | |
 |---|---|
-| Branch | `main` |
-| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete — operational reliability, and F10 fixed (v0.6.0) |
-| Next | No numbered phase left — the remaining debt, quick wins and star features in [`ROADMAP.md`](ROADMAP.md) |
-| Checks | `mix check` green: 729 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Branch | `feature/tech-debt` |
+| Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
+| Next | `services.request_headers` in plain text, then rate limiting on login and registration |
+| Checks | `mix check` green: 742 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -955,6 +955,28 @@ kept the same pid under the same `MonitorSupervisor` and recorded a healthy prob
 afterwards; editing the given-up service watched it again. Needing that second
 service to stay *healthy* is what exposed `/dev/flaky` answering 401 — fixed in
 the commit before this one.
+
+### Technical debt — webhook secret tokens
+
+- **Encrypted at rest** (ADR-018). `PulseOps.Vault` is AES-256-GCM with a random
+  IV and a version byte, keyed from `SECRET_KEY_BASE` through its own config key.
+  `Notifier.secret_token` is a `Vault.EncryptedString` with `redact: true`, so it
+  is ciphertext in the table and absent from `inspect` and logs.
+- **Never rendered.** The edit form used to put the stored token in the password
+  field's `value` — visible in the page source. It is now always empty, says a
+  token is set, treats blank as "keep", and removing the token is a checkbox.
+- **The migration converts existing rows** in Elixir and rolls back to plain
+  text.
+- `services.request_headers` has the same exposure and is now its own debt row.
+
+**Verified by tests first.** Twelve new tests failed against the old code for
+the reason each names — plain text in the column, the token in the edit page, in
+`inspect`, a blank save deleting it — and pass now.
+
+**Verified against the development database:** a plain-text token inserted
+before migrating came out as `bytea` with no trace of the plain text, the app
+read it back decrypted, rolling back restored the plain text as `varchar`, and
+migrating again re-encrypted it.
 
 ## Next steps
 

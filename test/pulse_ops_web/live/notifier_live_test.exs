@@ -213,5 +213,49 @@ defmodule PulseOpsWeb.NotifierLiveTest do
       assert updated.enabled == false
       assert updated.secret_token == nil
     end
+
+    test "never puts the stored secret token into the page, and keeps it on save", %{
+      conn: conn,
+      scope: scope
+    } do
+      notifier = notifier_fixture(scope, %{secret_token: "a-recognisable-token"})
+
+      {:ok, live, html} = live(conn, edit_notifier_path(scope, notifier))
+
+      # A password input still has a value attribute, and the core input fills it
+      # from the field — so the token used to be one "view source" away.
+      refute html =~ "a-recognisable-token"
+      assert html =~ "A token is set"
+
+      changed =
+        live
+        |> form("#notifier-form", %{notifier: %{name: "Renamed"}})
+        |> render_change()
+
+      refute changed =~ "a-recognisable-token"
+
+      {:ok, _live, _html} =
+        live
+        |> form("#notifier-form", %{notifier: %{name: "Renamed"}})
+        |> render_submit()
+        |> follow_redirect(conn, notifiers_path(scope))
+
+      assert Repo.reload!(notifier).name == "Renamed"
+      assert Repo.reload!(notifier).secret_token == "a-recognisable-token"
+    end
+
+    test "can remove the stored secret token", %{conn: conn, scope: scope} do
+      notifier = notifier_fixture(scope, %{secret_token: "a-recognisable-token"})
+
+      {:ok, live, _html} = live(conn, edit_notifier_path(scope, notifier))
+
+      {:ok, _live, _html} =
+        live
+        |> form("#notifier-form", %{notifier: %{clear_secret_token: "true"}})
+        |> render_submit()
+        |> follow_redirect(conn, notifiers_path(scope))
+
+      assert Repo.reload!(notifier).secret_token == nil
+    end
   end
 end

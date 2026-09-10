@@ -240,11 +240,12 @@ fails with the other monitor gone.
 | `Incidents` hard-coupled to `Notifications`; enqueue runs inside `ServiceMonitor` | DB work on the monitor's critical path | Low | Medium | P2 |
 | `WebhookSender` uses `PulseOpsWeb.Endpoint.url()` (domain depends on web) | Layer inversion | Low | Low | P2 |
 | `case record(...)` triplicated in `ServiceMonitor` (~lines 150, 165, 180) | Maintainability | Low | Low | P2 |
-| `secret_token` stored in plaintext, no `redact`, echoed back into the form | Secret exposure | Medium | Low | P2 |
-| StreamData declared in `mix.exs` and used nowhere | Missed testing opportunity | Low | Medium | P2 |
+| ~~`secret_token` stored in plaintext, no `redact`, echoed back into the form~~ — **fixed**: encrypted at rest, redacted, never rendered (ADR-018) | Secret exposure | Medium | Low | P2 |
+| `Service.request_headers` stored in plaintext — an `Authorization` header set on a check is readable in the table and rendered back into the service form | Secret exposure | Medium | Low | P2 |
+| ~~StreamData declared in `mix.exs` and used nowhere~~ — **done**: property tests for the status machine and `UrlGuard` | Missed testing opportunity | Low | Medium | P2 |
 | No rate limiting on login/registration | Brute force | Medium | Low | P2 |
 | `Bootstrapper` loads every enabled service into memory at once | Memory at boot, at scale | Low | Low | P3 |
-| `mix.exs` says `0.2.0` while `v0.3.0` is tagged; stray empty `.github;W` dir; 7 MB untracked `erl_crash.dump` | Noise | None | Trivial | P3 |
+| ~~`mix.exs` says `0.2.0` while `v0.3.0` is tagged; stray empty `.github;W` dir; 7 MB untracked `erl_crash.dump`~~ — **done** in the Phase 1 housekeeping | Noise | None | Trivial | P3 |
 
 ---
 

@@ -142,6 +142,11 @@ if config_env() == :prod do
     ],
     secret_key_base: secret_key_base
 
+  # Secrets kept in the database — webhook bearer tokens — are encrypted under a
+  # key derived from this same value (ADR-018). Rotating SECRET_KEY_BASE makes
+  # them unreadable: re-enter each webhook's token after a rotation.
+  config :pulse_ops, PulseOps.Vault, secret_key_base: secret_key_base
+
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key

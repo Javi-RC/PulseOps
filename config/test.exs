@@ -23,6 +23,10 @@ config :pulse_ops, PulseOpsWeb.Endpoint,
   secret_key_base: "CeTRnmD03dgDX2hiOEOK8gRrHu0IfvzW25sQx7zZK0DbMrOWKSnj4QQ8tTX0cKDs",
   server: false
 
+# Key base for secrets encrypted at rest (ADR-018).
+config :pulse_ops, PulseOps.Vault,
+  secret_key_base: "CeTRnmD03dgDX2hiOEOK8gRrHu0IfvzW25sQx7zZK0DbMrOWKSnj4QQ8tTX0cKDs"
+
 # In test we don't send emails
 config :pulse_ops, PulseOps.Mailer, adapter: Swoosh.Adapters.Test
 config :pulse_ops, PulseOps.Notifications.Mailer, adapter: Swoosh.Adapters.Test

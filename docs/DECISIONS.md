@@ -585,6 +585,61 @@ does not flicker to "stopped".
 
 ---
 
+## ADR-018 — Webhook tokens are encrypted at rest under a key derived from `SECRET_KEY_BASE`
+
+**Decision.** `notifiers.secret_token` is stored as AES-256-GCM ciphertext
+(`PulseOps.Vault`, through the `Vault.EncryptedString` Ecto type), redacted from
+`inspect`, and never rendered back into a page. The key is derived with PBKDF2
+from a key base in the application environment, which in production is the
+`SECRET_KEY_BASE` the endpoint already requires.
+
+**Why not a hash.** An API token only has to be *recognised*, so `Api.Token`
+stores its hash and nothing else. A webhook token has to be *sent*, on every delivery, so
+PulseOps must be able to recover it. The choice is between plain text and
+reversible encryption, and plain text meant anyone with a database dump, a
+backup or a read replica held every receiver's credential.
+
+**Why derive from `SECRET_KEY_BASE` rather than a new variable.** It is already
+mandatory, already secret, and already has to be managed as such. A second
+variable would be one more thing a deployment can forget, for no gain in the
+threat this addresses — someone holding the database but not the application's
+environment. The domain reads it from its own config key, set from the same
+value, so `PulseOps` never reaches into `PulseOpsWeb` configuration.
+
+**Why GCM and a random IV.** Authenticated, so a tampered or foreign value is
+refused instead of decrypting into a different token. A fresh IV per value, so
+notifiers that share a token do not visibly share a ciphertext. A version byte
+leads the format, so a future format can tell rows apart without guessing.
+
+**Why the form never shows it.** A password input still carries a `value`
+attribute, and the core input fills it from the form, so the stored token sat in
+the page source of every edit screen. The field is now always empty; blank on
+save means "keep", and removing a token is a separate, explicit checkbox —
+otherwise saving any other change would silently delete it.
+
+**Rejected.** *Cloak.* A well-made library, but it brings a vault process, a
+cipher configuration and key tags for what is one field; the whole of
+`PulseOps.Vault` is shorter than the configuration it would replace.
+
+*pgcrypto.* The key would travel in SQL, where it lands in logs and
+`pg_stat_statements`.
+
+*Failing soft on a value that will not decrypt.* Reading it as nil would turn a
+changed key into webhooks failing later for no visible reason.
+
+**Consequence.** Rotating `SECRET_KEY_BASE` makes every stored token unreadable,
+and loading an affected notifier raises. After a rotation, each webhook's token
+has to be entered again; `config/runtime.exs` says so where the variable is read.
+There is no re-keying tool yet — it would be a small task if rotation becomes
+routine. The migration converts existing rows in Elixir, because the key must
+never appear in SQL, and therefore depends on `PulseOps.Vault`.
+
+`services.request_headers` has the same exposure — an `Authorization` header on
+a check is plain text — and is recorded as its own debt item rather than folded
+in here, because it is a map rendered as editable rows, not a single field.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

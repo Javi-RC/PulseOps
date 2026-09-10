@@ -197,15 +197,30 @@ defmodule PulseOpsWeb.NotifierLive.Form do
                   </p>
                 </div>
                 <div class="mt-4">
+                  <%!-- value="" on purpose: the core input would otherwise fill a
+                       password field from the form, putting the stored token in
+                       the page source. --%>
                   <.input
                     field={@form[:secret_token]}
                     type="password"
                     label="Secret token"
                     autocomplete="new-password"
+                    value=""
+                    placeholder={@notifier.secret_token && "Leave blank to keep the current token"}
                   />
-                  <p class="mt-1 text-xs text-base-content/50">
+                  <p :if={is_nil(@notifier.secret_token)} class="mt-1 text-xs text-base-content/50">
                     Optional. Sent as a Bearer token in the Authorization header.
                   </p>
+                  <p :if={@notifier.secret_token} class="mt-1 text-xs text-base-content/50">
+                    A token is set. It is never shown again; type a new one to replace it.
+                  </p>
+                  <div :if={@notifier.secret_token} class="mt-2">
+                    <.input
+                      field={@form[:clear_secret_token]}
+                      type="checkbox"
+                      label="Remove the token"
+                    />
+                  </div>
                 </div>
               <% end %>
             </.card>

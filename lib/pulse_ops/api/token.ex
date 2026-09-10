@@ -6,10 +6,10 @@ defmodule PulseOps.Api.Token do
 
   The hash, and nothing else. The token itself exists for exactly as long as the
   response that created it — it is shown once and cannot be recovered, only
-  replaced. That is deliberately unlike `notifiers.secret_token`, which is kept
-  in the clear because it has to be *sent* on every delivery; a token here only
-  ever has to be *recognised*, and recognising something needs no more than its
-  hash.
+  replaced. That is deliberately unlike `notifiers.secret_token`, which is
+  encrypted rather than hashed because it has to be *sent* on every delivery; a
+  token here only ever has to be *recognised*, and recognising something needs
+  no more than its hash.
 
   A short `prefix` is kept in the clear so two tokens can be told apart in a
   list. It is not enough to replay.

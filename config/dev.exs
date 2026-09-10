@@ -30,6 +30,12 @@ config :pulse_ops, PulseOpsWeb.Endpoint,
     tailwind: {Tailwind, :install_and_run, [:pulse_ops, ~w(--watch)]}
   ]
 
+# Key base for secrets encrypted at rest (ADR-018). The same value as the
+# endpoint's, as in production; set separately so the domain never reads the
+# web layer's configuration.
+config :pulse_ops, PulseOps.Vault,
+  secret_key_base: "aw1ktZlMNCW6z+ovXQzhRo7s16dnuORILJ8QLGig8Bvbtmbhq0Uj4LJVVbxrA4xb"
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed
