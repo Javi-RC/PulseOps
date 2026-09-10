@@ -706,6 +706,50 @@ see the proxy's header.
 
 ---
 
+## ADR-020 — An incident's announcement is queued in its own transaction, and fanned out by a job
+
+**Decision.** Opening or resolving an incident inserts one
+`PulseOps.Incidents.EventJob` inside the same `Ecto.Multi` as the incident and
+its timeline event. That job, when it runs, decides everything that follows:
+which notifiers match, whether the service is flapping and gets a digest
+instead, whether a critical incident schedules an escalation.
+
+**Why.** All of that used to run after the commit, in the process that opened
+the incident — almost always a `ServiceMonitor`. Every transition to or from
+`:down` cost the monitor a service reload, a flap count over recent incidents, a
+notifier query, a bulk insert of delivery jobs and possibly an escalation
+insert, on the process whose job is to probe on time. Worse, it was not atomic:
+anything that stopped the process between the incident committing and the jobs
+being inserted — a crash, a deploy, a lost connection — left an incident that
+nobody was ever told about. A monitoring tool that silently drops the one
+notification that matters has failed at its purpose.
+
+**Why an Oban job in the transaction.** It is a transactional outbox without a
+new table: the job row commits with the incident or rolls back with it, and
+Oban is already what delivers, retries and prunes. The monitor's path gains one
+insert inside a transaction it was already running.
+
+**Rejected.** *A PubSub subscriber that enqueues on `{:incident_opened, _}`.*
+At-most-once: a subscriber that is restarting, or a node going down with the
+message in flight, loses the announcement — the failure this removes. It would
+also put every organization's fan-out behind one process.
+
+*Keeping the direct call and inserting the delivery jobs inside the Multi.* It
+fixes atomicity but keeps the notifier query, flap count and escalation logic on
+the monitor's path, and keeps `Incidents` knowing how notifications are routed.
+
+**Consequence.** The fan-out sees the world as of when the job runs, a moment
+later: a notifier created in between is included, and the flap count includes
+whatever else has happened by then — the same count a person looking at the
+timeline would make. If queuing the deliveries fails the job retries, and a
+retry after a partial fan-out can repeat a delivery; that requires the bulk
+insert of delivery jobs itself to report discarded rows, and a duplicate message
+is the better failure than none. `Incidents` still reads flap tuning from
+`Notifications`, which is configuration, not routing. Tests that assert on
+deliveries run the pending announcements first (`announce_incident_events/0`).
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

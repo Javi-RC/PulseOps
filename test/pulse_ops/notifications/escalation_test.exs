@@ -79,12 +79,14 @@ defmodule PulseOps.Notifications.EscalationTest do
   describe "scheduling an escalation" do
     test "a critical incident schedules one", %{service: service} do
       {:ok, incident} = Incidents.open_incident(service, critical_rule(), "down")
+      announce_incident_events()
 
       assert_enqueued(worker: EscalationJob, args: %{"incident_id" => incident.id})
     end
 
     test "an ordinary incident does not", %{service: service} do
       {:ok, _incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+      announce_incident_events()
 
       refute_enqueued(worker: EscalationJob)
     end
@@ -92,6 +94,7 @@ defmodule PulseOps.Notifications.EscalationTest do
     test "and neither does resolving one", %{service: service} do
       {:ok, _incident} = Incidents.open_incident(service, critical_rule(), "down")
       {:ok, _resolved} = Incidents.resolve_open_incident(service)
+      announce_incident_events()
 
       assert length(all_enqueued(worker: EscalationJob)) == 1
     end
@@ -106,6 +109,7 @@ defmodule PulseOps.Notifications.EscalationTest do
       )
 
       {:ok, _incident} = Incidents.open_incident(service, critical_rule(), "down")
+      announce_incident_events()
 
       refute_enqueued(worker: EscalationJob)
     end
@@ -179,6 +183,7 @@ defmodule PulseOps.Notifications.EscalationTest do
       first_line = notifier_fixture(scope, %{name: "First line"})
 
       {:ok, incident} = Incidents.open_incident(service, critical_rule(), "down")
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: %{"notifier_id" => first_line.id})
 

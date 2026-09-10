@@ -162,6 +162,7 @@ defmodule PulseOps.NotificationsTest do
       notifier_fixture(scope, %{enabled: false})
 
       {:ok, incident} = open_incident(scope)
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(webhook, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(email, incident, "opened"))
@@ -177,6 +178,7 @@ defmodule PulseOps.NotificationsTest do
       org_wide = notifier_fixture(scope)
 
       {:ok, incident} = Incidents.open_incident(service, AlertRule.default())
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(targeted, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(org_wide, incident, "opened"))
@@ -210,6 +212,7 @@ defmodule PulseOps.NotificationsTest do
 
       {:ok, incident} = Incidents.open_incident(service, AlertRule.default())
       {:ok, _resolved} = Incidents.resolve_open_incident(service)
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "opened"))
       assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "resolved"))
@@ -249,6 +252,7 @@ defmodule PulseOps.NotificationsTest do
 
       # The suppression is not a second rule about notifications: no incident
       # opened, so there was nothing to announce.
+      announce_incident_events()
       refute_enqueued(worker: NotifyJob)
     end
 
@@ -264,6 +268,7 @@ defmodule PulseOps.NotificationsTest do
         })
 
       assert {:ok, incident} = Incidents.open_incident(service, AlertRule.default(), "down")
+      announce_incident_events()
 
       assert_enqueued(worker: NotifyJob, args: job_args(notifier, incident, "opened"))
     end
@@ -283,6 +288,7 @@ defmodule PulseOps.NotificationsTest do
         })
 
       {:ok, _resolved} = Incidents.resolve_open_incident(service)
+      announce_incident_events()
 
       # Telling people something recovered is not a page in the night, and
       # leaving it out would make the timeline lie.

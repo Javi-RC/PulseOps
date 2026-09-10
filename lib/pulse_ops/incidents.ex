@@ -14,6 +14,7 @@ defmodule PulseOps.Incidents do
 
   alias Ecto.Multi
   alias PulseOps.Accounts.Scope
+  alias PulseOps.Incidents.EventJob
   alias PulseOps.Incidents.Incident
   alias PulseOps.Incidents.IncidentEvent
   alias PulseOps.Maintenance
@@ -137,6 +138,9 @@ defmodule PulseOps.Incidents do
         description: description
       })
     end)
+    # In the transaction, so the announcement commits with the incident or not
+    # at all; what it leads to is decided when the job runs, not here (ADR-020).
+    |> Oban.insert(:announcement, &EventJob.new_for(&1.incident, :opened))
     |> Repo.transaction()
     |> case do
       {:ok, %{incident: incident}} ->
@@ -147,7 +151,6 @@ defmodule PulseOps.Incidents do
         )
 
         broadcast(service.organization_id, {:incident_opened, incident})
-        Notifications.enqueue_incident_notifications(service.organization_id, incident, :opened)
         {:ok, incident}
 
       {:error, :incident, changeset, _changes} ->
@@ -203,6 +206,7 @@ defmodule PulseOps.Incidents do
             description: "#{service.name} recovered and the incident closed automatically"
           })
         end)
+        |> Oban.insert(:announcement, &EventJob.new_for(&1.incident, :resolved))
         |> Repo.transaction()
         |> case do
           {:ok, %{incident: incident}} ->
@@ -213,13 +217,6 @@ defmodule PulseOps.Incidents do
             )
 
             broadcast(service.organization_id, {:incident_resolved, incident})
-
-            Notifications.enqueue_incident_notifications(
-              service.organization_id,
-              incident,
-              :resolved
-            )
-
             {:ok, incident}
 
           {:error, :incident, changeset, _changes} ->
@@ -389,11 +386,11 @@ defmodule PulseOps.Incidents do
           description: "Incident resolved"
         })
       end)
+      |> Oban.insert(:announcement, &EventJob.new_for(&1.incident, :resolved))
       |> Repo.transaction()
       |> case do
         {:ok, %{incident: updated}} ->
           broadcast(scope.organization.id, {:incident_resolved, updated})
-          Notifications.enqueue_incident_notifications(scope.organization.id, updated, :resolved)
           {:ok, updated}
 
         {:error, :incident, changeset, _changes} ->

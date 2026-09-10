@@ -4,8 +4,10 @@ defmodule PulseOps.NotificationsFixtures do
   """
 
   alias PulseOps.AccountsFixtures
+  alias PulseOps.Incidents.EventJob
   alias PulseOps.Notifications
   alias PulseOps.OrganizationsFixtures
+  alias PulseOps.Repo
 
   @doc """
   Valid attributes for a webhook notifier. Name is unique so fixtures do not
@@ -36,5 +38,28 @@ defmodule PulseOps.NotificationsFixtures do
     user = AccountsFixtures.user_fixture()
     OrganizationsFixtures.membership_fixture(scope.organization, user, :member)
     user.id
+  end
+
+  @doc """
+  Runs the incident announcements queued so far, as Oban would, and removes
+  them.
+
+  Opening or resolving an incident only queues its announcement
+  (`PulseOps.Incidents.EventJob`); the deliveries, the flapping digest and the
+  escalation are decided when that job runs. A test asserting on those runs the
+  announcements first — and promptly, the way the queue would, because flap
+  detection counts what has happened by the time it runs.
+  """
+  def announce_incident_events do
+    worker = inspect(EventJob)
+
+    Oban.Job
+    |> Repo.all()
+    |> Enum.filter(&(&1.worker == worker and &1.state in ["available", "scheduled"]))
+    |> Enum.sort_by(& &1.id)
+    |> Enum.each(fn job ->
+      :ok = EventJob.perform(job)
+      Repo.delete!(job)
+    end)
   end
 end

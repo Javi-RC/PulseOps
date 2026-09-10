@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/tech-debt` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
-| Next | The rest of "Can wait": notification enqueue off the monitor's path, then the Bootstrapper |
-| Checks | `mix check` green: 769 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | The last "Can wait" item: the Bootstrapper loading every enabled service at once (P3) |
+| Checks | `mix check` green: 774 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -1057,6 +1057,37 @@ signed in from elsewhere.
   under `lib/pulse_ops` and fails on any mention of `PulseOpsWeb` outside
   `application.ex`, naming the file and line. It failed first on exactly the two
   offenders; the roadmap had only listed one of them.
+
+### Technical debt — notifications leave the monitor's path
+
+- **One announcement, inside the incident's transaction** (ADR-020). Opening an
+  incident, resolving it on recovery and resolving it by hand each insert an
+  `Incidents.EventJob` in the same `Ecto.Multi`. The job does what `Incidents`
+  used to do after the commit, in the monitor: match notifiers, check for
+  flapping, schedule an escalation.
+- **It fixes a lost-notification window, not only latency.** The old call ran
+  after the commit, so a monitor that crashed or a node that went down in
+  between left an incident nobody was told about. The announcement now commits
+  with the incident or not at all.
+- **Tests run announcements explicitly.** `announce_incident_events/0` performs
+  the pending `EventJob`s the way the queue would and deletes them. The flapping
+  tests call it after every open and every resolve, because flap detection
+  counts what has happened by the time the job runs — batching them at the end
+  would have made the first crossings look like flapping too.
+
+**Verified by tests first.** Five new tests failed against the old code — no
+announcement was queued, and opening an incident queued deliveries directly on
+the caller's path.
+
+**Verified against the running app** with `priv/scenarios/flapping_and_escalation.exs`
+and a live queue. Its first run after the change failed twice, and not because
+of a bug: it read the queue straight after opening an incident, which only
+worked while the fan-out ran inline. It now waits for what the announcement
+leads to, and counts deliveries in any state because the live queue may already
+be running them. With that, every step passed: the first line told and the
+escalation-only channel quiet, one digest for eight crossings, an escalation
+scheduled for a critical incident and delivered to the second line, and nothing
+more once it was acknowledged.
 
 ## Next steps
 

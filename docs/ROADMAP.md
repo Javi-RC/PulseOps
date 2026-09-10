@@ -237,7 +237,7 @@ fails with the other monitor gone.
 
 | Problem | Impact | Risk | Effort | Priority |
 |---|---|---|---|---|
-| `Incidents` hard-coupled to `Notifications`; enqueue runs inside `ServiceMonitor` | DB work on the monitor's critical path | Low | Medium | P2 |
+| ~~`Incidents` hard-coupled to `Notifications`; enqueue runs inside `ServiceMonitor`~~ — **fixed**: one `Incidents.EventJob` inserted in the incident's transaction does the fan-out (ADR-020) | DB work on the monitor's critical path | Low | Medium | P2 |
 | ~~`WebhookSender` uses `PulseOpsWeb.Endpoint.url()` (domain depends on web)~~ — **fixed**: `PulseOps.Links` from the domain's own config, and a boundary test keeps `PulseOpsWeb` out of `lib/pulse_ops` | Layer inversion | Low | Low | P2 |
 | ~~`case record(...)` triplicated in `ServiceMonitor` (~lines 150, 165, 180)~~ — **done**: one `finish_check/2` for every way a probe ends | Maintainability | Low | Low | P2 |
 | ~~`secret_token` stored in plaintext, no `redact`, echoed back into the form~~ — **fixed**: encrypted at rest, redacted, never rendered (ADR-018) | Secret exposure | Medium | Low | P2 |

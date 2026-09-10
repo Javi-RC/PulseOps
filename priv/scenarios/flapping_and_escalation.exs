@@ -36,6 +36,31 @@ queued = fn worker ->
   )
 end
 
+# Opening or resolving an incident only queues its announcement; the running
+# queue picks it up a moment later and fans it out (ADR-020). So what the
+# announcement leads to is waited for, not read straight away — and a delivery is
+# counted in any state, because the live queue may already be running it.
+eventually = fn fun ->
+  deadline = System.monotonic_time(:millisecond) + 10_000
+
+  Stream.repeatedly(fn ->
+    result = fun.()
+    if not result, do: Process.sleep(100)
+    result
+  end)
+  |> Enum.find(fn result -> result or System.monotonic_time(:millisecond) > deadline end)
+end
+
+deliveries_to = fn notifier ->
+  Repo.aggregate(
+    from(j in Oban.Job,
+      where: j.worker == "PulseOps.Notifications.NotifyJob",
+      where: fragment("(?->>'notifier_id')::int = ?", j.args, ^notifier.id)
+    ),
+    :count
+  )
+end
+
 suffix = System.os_time(:millisecond)
 {:ok, user} = Accounts.register_user(%{email: "flap-#{suffix}@pulseops.test"})
 {:ok, organization} = Organizations.create_organization(user, %{name: "Flap Demo #{suffix}"})
@@ -73,25 +98,16 @@ scope =
   })
 
 Check.step("An ordinary incident pages the first line and not the second")
-before_notify = queued.("PulseOps.Notifications.NotifyJob")
 {:ok, _incident} = Incidents.open_incident(service, AlertRule.default(), "down")
 {:ok, _resolved} = Incidents.resolve_open_incident(service)
 
+# Both announcements — opened and resolved — have reached the first line.
 Check.check(
-  queued.("PulseOps.Notifications.NotifyJob") > before_notify,
+  eventually.(fn -> deliveries_to.(first_line) >= 2 end),
   "the first line was told"
 )
 
-second_line_jobs =
-  Repo.aggregate(
-    from(j in Oban.Job,
-      where: j.worker == "PulseOps.Notifications.NotifyJob",
-      where: fragment("(?->>'notifier_id')::int = ?", j.args, ^second_line.id)
-    ),
-    :count
-  )
-
-Check.check(second_line_jobs == 0, "and the escalation-only channel stayed quiet")
+Check.check(deliveries_to.(second_line) == 0, "and the escalation-only channel stayed quiet")
 
 Check.step("A service that keeps oscillating produces one digest, not a storm")
 before_digest = queued.("PulseOps.Notifications.DigestJob")
@@ -155,7 +171,7 @@ Repo.update_all(
 {:ok, incident} = Incidents.open_incident(service, critical, "connection refused")
 
 Check.check(
-  queued.("PulseOps.Notifications.EscalationJob") >= 1,
+  eventually.(fn -> queued.("PulseOps.Notifications.EscalationJob") >= 1 end),
   "an escalation was scheduled for the critical incident"
 )
 
