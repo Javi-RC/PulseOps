@@ -11,9 +11,11 @@ defmodule PulseOpsWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  # :x_headers so the login and registration LiveViews can see the address a
+  # trusted proxy appended to X-Forwarded-For (PulseOpsWeb.ClientIp).
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+    websocket: [connect_info: [:x_headers, session: @session_options]],
+    longpoll: [connect_info: [:x_headers, session: @session_options]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #

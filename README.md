@@ -76,6 +76,13 @@ only for a database on a private network that does not speak TLS),
 HTTP is redirected to HTTPS with HSTS, trusting `x-forwarded-proto`, so put it
 behind a proxy or load balancer that terminates TLS.
 
+Sign-in, magic-link and registration attempts are always limited per email. Set
+`TRUSTED_PROXY=true` to limit them per client address as well — **only** if every
+request goes through that proxy, it appends the client address to
+`X-Forwarded-For`, and the app cannot be reached any other way. Otherwise the
+header is whatever the client sent, and trusting it would let anyone claim a
+fresh address for every attempt.
+
 **One node only.** Every node starts a monitor for every enabled service, so a
 second replica duplicates probes, checks and notifications. The partial unique
 index keeps incidents from being duplicated and protects nothing else. Do not

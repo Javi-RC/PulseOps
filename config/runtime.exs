@@ -129,6 +129,12 @@ if config_env() == :prod do
       For example: status.example.com
       """
 
+  # Set TRUSTED_PROXY=true only when every request reaches PulseOps through a
+  # proxy that appends the client address to X-Forwarded-For, and the app cannot
+  # be reached around it. Otherwise that header is whatever the client wrote, and
+  # limiting by it would let anyone pick a fresh address per attempt (ADR-019).
+  config :pulse_ops, :trusted_proxy, System.get_env("TRUSTED_PROXY") in ~w(true 1)
+
   config :pulse_ops, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :pulse_ops, PulseOpsWeb.Endpoint,

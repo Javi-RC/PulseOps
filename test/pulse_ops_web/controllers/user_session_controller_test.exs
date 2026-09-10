@@ -74,6 +74,46 @@ defmodule PulseOpsWeb.UserSessionControllerTest do
     end
   end
 
+  describe "POST /users/log-in - throttling password attempts" do
+    defp attempt(conn, email, password) do
+      post(conn, ~p"/users/log-in", %{"user" => %{"email" => email, "password" => password}})
+    end
+
+    test "refuses an email after repeated failures, even with the right password", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+
+      for _attempt <- 1..5 do
+        conn = attempt(conn, user.email, "wrong-password")
+        assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
+      end
+
+      conn = attempt(conn, user.email, valid_user_password())
+
+      refute get_session(conn, :user_token)
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Too many attempts"
+      assert redirected_to(conn) == ~p"/users/log-in"
+    end
+
+    test "one email's failures do not lock out another", %{conn: conn, user: user} do
+      other = user_fixture() |> set_password()
+
+      for _attempt <- 1..5, do: attempt(conn, user.email, "wrong-password")
+
+      assert conn |> attempt(other.email, valid_user_password()) |> get_session(:user_token)
+    end
+
+    test "successful logins are not counted", %{conn: conn, user: user} do
+      user = set_password(user)
+
+      for _login <- 1..6 do
+        assert conn |> attempt(user.email, valid_user_password()) |> get_session(:user_token)
+      end
+    end
+  end
+
   describe "POST /users/log-in - magic link" do
     test "logs the user in", %{conn: conn, user: user} do
       {token, _hashed_token} = generate_user_magic_link_token(user)

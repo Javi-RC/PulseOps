@@ -18,6 +18,9 @@ defmodule PulseOps.Application do
       # Housekeeping jobs: check retention and expired token purge. Reads its
       # config from the app env so tests and dev can swap the queue settings.
       {Oban, Application.fetch_env!(:pulse_ops, Oban)},
+      # Owns the counters that slow down login, magic-link and registration
+      # attempts. Before the endpoint, so the table exists by the first request.
+      PulseOpsWeb.RateLimiter,
       # Start to serve requests, typically the last entry
       PulseOpsWeb.Endpoint
     ]

@@ -2,6 +2,8 @@ defmodule PulseOpsWeb.UserSessionController do
   use PulseOpsWeb, :controller
 
   alias PulseOps.Accounts
+  alias PulseOpsWeb.AuthThrottle
+  alias PulseOpsWeb.ClientIp
   alias PulseOpsWeb.UserAuth
 
   def create(conn, %{"_action" => "confirmed"} = params) do
@@ -31,6 +33,24 @@ defmodule PulseOpsWeb.UserSessionController do
 
   # email + password login
   defp create(conn, %{"user" => user_params}, info) do
+    %{"email" => email} = user_params
+    address = ClientIp.from_conn(conn)
+
+    # Checked before the password is: refusing only after bcrypt had run would
+    # still let a client spend our CPU at whatever rate it chose.
+    case AuthThrottle.check_password(email, address) do
+      :ok ->
+        log_in_with_password(conn, user_params, address, info)
+
+      denied ->
+        conn
+        |> put_flash(:error, AuthThrottle.message(denied))
+        |> put_flash(:email, String.slice(email, 0, 160))
+        |> redirect(to: ~p"/users/log-in")
+    end
+  end
+
+  defp log_in_with_password(conn, user_params, address, info) do
     %{"email" => email, "password" => password} = user_params
 
     if user = Accounts.get_user_by_email_and_password(email, password) do
@@ -38,6 +58,8 @@ defmodule PulseOpsWeb.UserSessionController do
       |> put_flash(:info, info)
       |> UserAuth.log_in_user(user, user_params)
     else
+      AuthThrottle.failed_password(email, address)
+
       # In order to prevent user enumeration attacks, don't disclose whether the email is registered.
       conn
       |> put_flash(:error, "Invalid email or password")

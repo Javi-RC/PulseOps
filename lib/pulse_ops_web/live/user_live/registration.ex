@@ -3,6 +3,8 @@ defmodule PulseOpsWeb.UserLive.Registration do
 
   alias PulseOps.Accounts
   alias PulseOps.Accounts.User
+  alias PulseOpsWeb.AuthThrottle
+  alias PulseOpsWeb.ClientIp
 
   @impl true
   def render(assigns) do
@@ -51,11 +53,35 @@ defmodule PulseOpsWeb.UserLive.Registration do
   def mount(_params, _session, socket) do
     changeset = Accounts.change_user_email(%User{}, %{}, validate_unique: false)
 
-    {:ok, assign_form(socket, changeset), temporary_assigns: [form: nil]}
+    # Connect info is only readable during mount.
+    client_ip = ClientIp.from_x_headers(get_connect_info(socket, :x_headers))
+
+    {:ok, socket |> assign(:client_ip, client_ip) |> assign_form(changeset),
+     temporary_assigns: [form: nil]}
   end
 
   @impl true
   def handle_event("save", %{"user" => user_params}, socket) do
+    case AuthThrottle.hit(:registration, user_params["email"], socket.assigns.client_ip) do
+      :ok ->
+        register(socket, user_params)
+
+      denied ->
+        changeset = Accounts.change_user_email(%User{}, user_params, validate_unique: false)
+
+        {:noreply,
+         socket
+         |> put_flash(:error, AuthThrottle.message(denied))
+         |> assign_form(changeset)}
+    end
+  end
+
+  def handle_event("validate", %{"user" => user_params}, socket) do
+    changeset = Accounts.change_user_email(%User{}, user_params, validate_unique: false)
+    {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
+  end
+
+  defp register(socket, user_params) do
     case Accounts.register_user(user_params) do
       {:ok, user} ->
         {:ok, _} =
@@ -75,11 +101,6 @@ defmodule PulseOpsWeb.UserLive.Registration do
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign_form(socket, changeset)}
     end
-  end
-
-  def handle_event("validate", %{"user" => user_params}, socket) do
-    changeset = Accounts.change_user_email(%User{}, user_params, validate_unique: false)
-    {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
   end
 
   defp assign_form(socket, %Ecto.Changeset{} = changeset) do

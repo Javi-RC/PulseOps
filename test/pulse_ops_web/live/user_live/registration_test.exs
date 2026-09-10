@@ -64,6 +64,23 @@ defmodule PulseOpsWeb.UserLive.RegistrationTest do
 
       assert result =~ "has already been taken"
     end
+
+    test "stops accepting attempts for one email after a few", %{conn: conn} do
+      email = unique_user_email()
+      user_fixture(%{email: email})
+
+      submit = fn ->
+        {:ok, lv, _html} = live(conn, ~p"/users/register")
+
+        lv
+        |> form("#registration_form", user: %{"email" => email})
+        |> render_submit()
+      end
+
+      for _attempt <- 1..3, do: assert(submit.() =~ "has already been taken")
+
+      assert submit.() =~ "Too many attempts"
+    end
   end
 
   describe "registration navigation" do

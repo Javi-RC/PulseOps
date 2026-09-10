@@ -137,6 +137,13 @@ config :pulse_ops, :dashboard_debounce_ms, 250
 # private network sets this to true.
 config :pulse_ops, :allow_private_targets, false
 
+# Whether every request arrives through a proxy that appends the client's
+# address to X-Forwarded-For. Only then are login, magic-link and registration
+# attempts also limited per address; otherwise per email only, because a header
+# the client can write is not an address (ADR-019). Production reads it from
+# TRUSTED_PROXY.
+config :pulse_ops, :trusted_proxy, false
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

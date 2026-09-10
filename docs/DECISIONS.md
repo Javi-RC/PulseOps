@@ -646,6 +646,66 @@ than sent.
 
 ---
 
+## ADR-019 — Sign-in attempts are limited per email, and per address only behind a trusted proxy
+
+**Decision.** Password logins, magic-link requests and registrations are limited
+per email, always, and per client address only when `TRUSTED_PROXY` says every
+request comes through a proxy that appends the address to `X-Forwarded-For`.
+The address is then the *rightmost* entry of that header. Counters are
+fixed-window, in an ETS table owned by `PulseOpsWeb.RateLimiter`.
+
+| Action | Per email | Per address |
+|---|---|---|
+| Password login (failures only) | 5 / 15 min | 50 / 15 min |
+| Magic-link request | 3 / 15 min | 20 / 15 min |
+| Registration | 3 / hour | 10 / hour |
+
+**Why not simply the peer address.** PulseOps is deployed behind a proxy that
+terminates TLS, so the peer is the proxy. A limit on it is one limit shared by
+everybody, and whoever trips it locks every user out — a rate limiter turned
+into a denial of service.
+
+**Why not `X-Forwarded-For` unconditionally.** The client writes that header.
+If the app is reachable around the proxy, or the proxy passes the header through
+unchanged, every attempt can claim a new address and the limit is decoration.
+Only the operator knows whether that is the case, so it is a setting, off by
+default. The rightmost entry is used because it is the one the proxy appended;
+anything to its left came from the client.
+
+**Why per email as well.** It needs no trust in the network: it stops one
+account being guessed at, and one inbox being flooded with magic links or
+confirmation emails by somebody typing it into a form. It is also all that
+applies without a trusted proxy.
+
+**Why password failures only, checked first.** A person who types their
+password correctly should never lock themselves out. The check happens before
+the password is verified, so a refused attempt runs no bcrypt — otherwise the
+limit would refuse the login but still spend the CPU at the attacker's rate.
+Magic links and registrations count every request, because every request can
+send an email.
+
+**Why fixed windows.** The purpose is to make guessing slow, not to meter
+precisely. A burst across a window boundary gets through at up to twice the
+limit, which does not change how long guessing takes. A sliding window would
+mean keeping timestamps per key for that.
+
+**Rejected.** *Hammer or PlugAttack.* Both would do, and both bring
+configuration and a backend abstraction for three counters on one node; the
+limiter is under a hundred lines.
+
+*A 429 status.* These are browser forms; the person needs the form back with a
+message, not an error page.
+
+**Consequence.** Counts live on one node and reset if the limiter process
+restarts — an acceptable failure towards letting people in, and consistent with
+PulseOps running as a single node until there is leader election. The refusal
+message is the same whether or not the email has an account, so the limit does
+not become a way to enumerate them. The LiveView socket now carries
+`:x_headers` in its connect info, which is how the login and registration pages
+see the proxy's header.
+
+---
+
 ## ADR-005 — Monitors never start themselves in the test environment
 
 **Decision.** `config :pulse_ops, start_monitors: false` in `config/test.exs`; the

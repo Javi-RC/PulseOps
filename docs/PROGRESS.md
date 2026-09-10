@@ -9,8 +9,8 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/tech-debt` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
-| Next | Rate limiting on login and registration |
-| Checks | `mix check` green: 747 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
+| Next | The rest of "Can wait": notification enqueue off the monitor's path, `Endpoint.url()` in the domain, the triplicated `case record`, then the Bootstrapper |
+| Checks | `mix check` green: 766 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
 ## Commands
@@ -1005,6 +1005,37 @@ plain-text `Authorization` header in `jsonb` came out as `bytea` with no trace o
 it, every existing service row was converted, the app read the header back
 decrypted and hidden from `inspect`, rolling back restored the original `jsonb`,
 and migrating again re-encrypted it.
+
+### Technical debt — rate limiting sign-in
+
+- **Per email, always; per address behind a trusted proxy** (ADR-019). Password
+  logins (5 failures / 15 min per email, 50 per address), magic-link requests
+  (3 / 20) and registrations (3 / 10 per hour). The address is believed only
+  with `TRUSTED_PROXY` set, and then only the rightmost `X-Forwarded-For` entry
+  — the peer is the TLS-terminating proxy, and the rest of the header is
+  whatever the client wrote.
+- **Password attempts count only when they fail, and are checked before
+  bcrypt**, so a refused attempt costs nothing and a correct password never
+  locks anyone out.
+- **A refused magic-link request sends no email**, and the message is the same
+  whether or not the account exists.
+- `PulseOpsWeb.RateLimiter` is fixed-window counters in a public ETS table with
+  atomic `update_counter/4`, swept every minute. The LiveView socket now carries
+  `:x_headers`, which is how the login and registration pages see the proxy's
+  header.
+
+**Verified by tests first.** Sixteen tests failed against the old code — the
+limiter and address modules did not exist, and none of the three flows refused
+anything. The per-address tests are their own non-async module: the setting is
+application env, and every other request in the suite comes from 127.0.0.1.
+
+**Verified against the running app** with `priv/scenarios/sign_in_throttle.exs`,
+over real HTTP — the login page's CSRF token, the session cookie, the form post:
+five wrong passwords, then the right one refused with "Too many attempts" while
+another account signed in; 51 emails from one spoofed `X-Forwarded-For` all
+still tried without a trusted proxy; and with one, the 51st attempt from a
+single address refused even with a correct password, while the same account
+signed in from elsewhere.
 
 ## Next steps
 
