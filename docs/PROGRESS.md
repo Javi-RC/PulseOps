@@ -9,7 +9,7 @@ of each phase. **Read this first when picking the work back up.**
 |---|---|
 | Branch | `feature/tech-debt` |
 | Phase | Phase 4 of [`ROADMAP.md`](ROADMAP.md) complete (v0.6.0); working through the "Can wait" technical debt |
-| Next | The rest of "Can wait": notification enqueue off the monitor's path, `Endpoint.url()` in the domain, the triplicated `case record`, then the Bootstrapper |
+| Next | The rest of "Can wait": `Endpoint.url()` in the domain, notification enqueue off the monitor's path, then the Bootstrapper |
 | Checks | `mix check` green: 766 tests, coverage above the 90% threshold, Credo `--strict` and Dialyzer clean |
 
 
@@ -1036,6 +1036,15 @@ another account signed in; 51 emails from one spoofed `X-Forwarded-For` all
 still tried without a trusted proxy; and with one, the 51st attempt from a
 single address refused even with a correct password, while the same account
 signed in from elsewhere.
+
+### Technical debt — one way for a probe to end
+
+- `ServiceMonitor` handled a probe that reported, a probe whose task crashed, and
+  a probe that overran its backstop with three copies of the same `case` over
+  `record/2`. They now all go through `finish_check/2`, so the rule "record it,
+  then schedule the next one or stop because the service is gone" is written
+  once. A pure refactor: the existing tests for all three paths, and for a
+  service deleted under a running monitor, are what hold it in place.
 
 ## Next steps
 
