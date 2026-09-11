@@ -6,6 +6,7 @@ defmodule PulseOpsWeb.IncidentLive.Show do
   use PulseOpsWeb, :live_view
 
   import PulseOpsWeb.MonitoringComponents
+  import PulseOpsWeb.UIComponents
 
   alias PulseOps.Incidents
   alias PulseOps.Incidents.Incident
@@ -80,6 +81,27 @@ defmodule PulseOpsWeb.IncidentLive.Show do
   defp acknowledger(%{acknowledged_by: %{email: email}}), do: email
   defp acknowledger(_incident), do: "somebody"
 
+  # Only a critical incident escalates, and only if nobody acknowledges it in
+  # time. Saying when turns "Acknowledge" from a formality into a deadline.
+  defp escalation_note(%{severity: :critical, acknowledged_at: nil} = incident) do
+    with seconds when is_integer(seconds) <- PulseOps.Notifications.escalation_after_seconds() do
+      at = DateTime.add(incident.started_at, seconds, :second)
+
+      if DateTime.after?(at, DateTime.utc_now()) do
+        "Nobody has acknowledged it yet. If nobody does by #{Calendar.strftime(at, "%H:%M")} UTC, " <>
+          "the escalation channels are told."
+      else
+        "Nobody acknowledged it in time, so it has escalated."
+      end
+    end
+  end
+
+  defp escalation_note(_incident), do: nil
+
+  # Position in the workflow, so the steps before it can read as done.
+  defp current_step(incident),
+    do: Enum.find_index(workflow_statuses(), &(&1 == incident.status)) || -1
+
   defp respond({:ok, incident}, socket, message) do
     {:noreply,
      socket
@@ -114,15 +136,14 @@ defmodule PulseOpsWeb.IncidentLive.Show do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
-      <.link
-        navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents"}
-        class="text-sm text-base-content/60 hover:underline"
-      >
-        &larr; All incidents
-      </.link>
+      <.breadcrumb>
+        <:item navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents"}>Incidents</:item>
+        <:item>{@incident.title}</:item>
+      </.breadcrumb>
 
-      <div class="mt-2 mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 class="text-2xl font-semibold">{@incident.title}</h1>
           <p class="mt-1 text-sm text-base-content/60">
@@ -144,60 +165,84 @@ defmodule PulseOpsWeb.IncidentLive.Show do
 
       <div :if={@can_respond? and Incident.open?(@incident)} class="mb-8 space-y-4">
         <div>
-          <div class="mb-2 text-sm font-medium">Move to</div>
-          <div class="flex flex-wrap gap-2">
-            <button
-              :for={status <- workflow_statuses()}
-              phx-click="set_status"
-              phx-value-status={status}
-              disabled={status == @incident.status}
-              class={[
-                "btn btn-sm",
-                status == @incident.status && "btn-active btn-primary"
-              ]}
-            >
-              {incident_status_label(status)}
-            </button>
-          </div>
+          <div id="incident-status-label" class="mb-2 text-sm font-medium">Status</div>
+          <%!-- Where it stands is a marker, not a button: a disabled button would
+               read as something broken rather than "you are here". --%>
+          <ol
+            id="incident-status"
+            aria-labelledby="incident-status-label"
+            class="flex flex-wrap items-center gap-2"
+          >
+            <li :for={{status, index} <- Enum.with_index(workflow_statuses())}>
+              <%= if status == @incident.status do %>
+                <span
+                  aria-current="step"
+                  class="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-sm font-medium text-primary-content"
+                >
+                  <.icon name="lucide-circle-dot" class="size-4" />
+                  {incident_status_label(status)}
+                </span>
+              <% else %>
+                <.button
+                  type="button"
+                  phx-click="set_status"
+                  phx-value-status={status}
+                  variant={if(index < current_step(@incident), do: "secondary", else: "outline")}
+                  size="sm"
+                  class="rounded-full"
+                >
+                  <.icon :if={index < current_step(@incident)} name="lucide-check" class="size-4" />
+                  {incident_status_label(status)}
+                </.button>
+              <% end %>
+            </li>
+          </ol>
+          <p class="mt-2 text-xs text-base-content/50">
+            Move it to wherever the response stands; every change goes on the timeline.
+          </p>
         </div>
 
-        <form phx-submit="save_cause">
-          <label class="mb-1 block text-sm font-medium" for="cause">Root cause</label>
-          <textarea
-            id="cause"
+        <form phx-submit="save_cause" class="space-y-2">
+          <.input
             name="cause"
+            value={@incident.cause}
+            type="textarea"
+            label="Root cause"
             rows="3"
-            class="textarea textarea-bordered w-full"
             placeholder="Database connection pool exhausted."
-          >{@incident.cause}</textarea>
-          <button class="btn btn-sm mt-2">Save root cause</button>
+          />
+          <.button size="sm">Save root cause</.button>
         </form>
 
         <form phx-submit="add_note" class="flex gap-2">
-          <input
-            type="text"
+          <.input
             name="note"
             value={@note}
+            type="text"
             placeholder="Add a note to the timeline"
-            class="input input-bordered flex-1"
+            class="flex-1"
           />
-          <button class="btn btn-sm">Add note</button>
+          <.button size="sm">Add note</.button>
         </form>
 
         <div class="flex flex-wrap gap-2">
-          <button
-            :if={is_nil(@incident.acknowledged_at)}
-            phx-click="acknowledge"
-            class="btn btn-sm"
-          >
+          <.button :if={is_nil(@incident.acknowledged_at)} phx-click="acknowledge" size="sm">
             <.icon name="lucide-hand" class="size-4" /> Acknowledge
-          </button>
+          </.button>
 
-          <button phx-click="resolve" class="btn btn-primary btn-sm">Resolve incident</button>
+          <.button phx-click="resolve" variant="primary" size="sm">Resolve incident</.button>
         </div>
 
         <p :if={@incident.acknowledged_at} class="mt-2 text-xs text-base-content/50">
           Acknowledged by {acknowledger(@incident)}, so it will not escalate.
+        </p>
+
+        <p
+          :if={escalation_note(@incident)}
+          id="escalation-note"
+          class="mt-2 text-xs text-base-content/60"
+        >
+          {escalation_note(@incident)}
         </p>
       </div>
 

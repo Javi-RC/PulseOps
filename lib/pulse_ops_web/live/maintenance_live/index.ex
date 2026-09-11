@@ -101,6 +101,7 @@ defmodule PulseOpsWeb.MaintenanceLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="Maintenance">
         <:subtitle>
@@ -129,18 +130,24 @@ defmodule PulseOpsWeb.MaintenanceLive.Index do
         </.form>
       </.card>
 
-      <p
+      <.empty_state
         :if={@windows == []}
-        class="rounded-box border border-base-300 p-6 text-sm text-base-content/60"
+        id="maintenance-empty"
+        icon="lucide-calendar-clock"
+        title="Nothing scheduled"
       >
-        Nothing scheduled.
-      </p>
+        <:subtitle>
+          <%= if @can_manage? do %>
+            Schedule a window above before a deploy, and nobody is paged while it runs.
+          <% else %>
+            Incidents open and notify as usual. An owner or admin can hold them back during
+            planned work.
+          <% end %>
+        </:subtitle>
+      </.empty_state>
 
-      <ul :if={@windows != []} class="divide-y divide-base-300 rounded-box border border-base-300">
-        <li
-          :for={window <- @windows}
-          class="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5"
-        >
+      <.list_card :if={@windows != []} id="maintenance-windows">
+        <:item :for={window <- @windows} class="flex flex-wrap items-center justify-between gap-3">
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-medium">{window.reason}</span>
@@ -153,17 +160,19 @@ defmodule PulseOpsWeb.MaintenanceLive.Index do
             </p>
           </div>
 
-          <button
+          <.button
             :if={@can_manage?}
             phx-click="cancel"
             phx-value-id={window.id}
             data-confirm={cancel_confirmation(Window.state(window, @now))}
-            class="btn btn-ghost btn-sm"
+            data-confirm-label="Cancel window"
+            variant="ghost"
+            size="sm"
           >
             Cancel
-          </button>
-        </li>
-      </ul>
+          </.button>
+        </:item>
+      </.list_card>
     </Layouts.app>
     """
   end

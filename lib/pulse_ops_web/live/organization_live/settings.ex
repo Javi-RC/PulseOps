@@ -1,12 +1,19 @@
 defmodule PulseOpsWeb.OrganizationLive.Settings do
   @moduledoc """
-  Renames an organization or changes the slug its addresses are built from.
+  The organization's own settings: its name and address, its public status
+  page, and the way in to the integrations that live under it.
+
+  Laid out as sections — what a group of settings is for on the left, the
+  settings themselves on the right — so a page of two forms and two links reads
+  as three decisions rather than a stack of look-alike boxes. Alert rules are not
+  here: they have their own entry in the navigation, next to maintenance.
   """
 
   use PulseOpsWeb, :live_view
 
   import PulseOpsWeb.UIComponents
 
+  alias Phoenix.HTML.Form
   alias PulseOps.Organizations
 
   @impl true
@@ -88,126 +95,189 @@ defmodule PulseOpsWeb.OrganizationLive.Settings do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="Settings">
-        <:subtitle>How this organization is named and addressed.</:subtitle>
+        <:subtitle>
+          The organization's name and address, its public status page, and how other systems
+          connect to it.
+        </:subtitle>
       </.page_header>
 
-      <.card class="max-w-xl">
-        <.form
-          for={@form}
-          id="organization-form"
-          phx-change="validate"
-          phx-submit="save"
-          class="space-y-4"
-        >
-          <.input field={@form[:name]} type="text" label="Name" required />
-          <.input field={@form[:slug]} type="text" label="URL" required />
+      <div class="divide-y divide-base-300">
+        <.settings_section id="general" title="General">
+          <:description>
+            How the organization is named, and the address its pages live at.
+          </:description>
 
-          <div class="rounded-lg bg-warning/10 p-3 text-xs text-base-content/70">
-            <.icon name="lucide-triangle-alert" class="mr-1 size-3.5 align-text-bottom" />
-            Changing the URL changes every address for this organization. Existing links and
-            bookmarks will stop working.
-          </div>
-
-          <.button variant="primary" phx-disable-with="Saving...">Save changes</.button>
-        </.form>
-      </.card>
-
-      <.card class="mt-6 max-w-xl">
-        <.form
-          for={@status_page_form}
-          id="status-page-form"
-          phx-change="validate_status_page"
-          phx-submit="save_status_page"
-          class="space-y-4"
-        >
-          <div>
-            <p class="font-medium">Public status page</p>
-            <p class="mt-0.5 text-sm text-base-content/50">
-              A page anybody can read without an account, at <code class="text-xs">/status/{@organization.slug}</code>. Service names, statuses
-              and uptime appear on it. URLs, incident causes and timelines never do.
-            </p>
-          </div>
-
-          <.input
-            field={@status_page_form[:status_page_enabled]}
-            type="checkbox"
-            label="Publish a status page"
-          />
-
-          <.input
-            field={@status_page_form[:status_page_headline]}
-            type="text"
-            label="Headline"
-            placeholder="Live status of our services"
-          />
-
-          <div class="flex items-center gap-3">
-            <.button variant="primary" phx-disable-with="Saving...">Save</.button>
-            <.link
-              :if={@organization.status_page_enabled}
-              navigate={~p"/status/#{@organization.slug}"}
-              class="btn btn-soft btn-sm"
+          <.card>
+            <.form
+              for={@form}
+              id="organization-form"
+              phx-change="validate"
+              phx-submit="save"
+              class="space-y-4"
             >
-              View the page
-            </.link>
-          </div>
-        </.form>
-      </.card>
+              <.input field={@form[:name]} type="text" label="Name" required />
 
-      <.card class="mt-6 max-w-xl">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="font-medium">Alert rules</p>
-            <p class="mt-0.5 text-sm text-base-content/50">
-              When a service counts as down, how quickly it recovers, and how its incidents are
-              classified.
-            </p>
-          </div>
-          <.link
-            navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules"}
-            class="btn btn-soft btn-sm"
-          >
-            Edit rules
-          </.link>
-        </div>
-      </.card>
-      <.card class="mt-6 max-w-xl">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="font-medium">API tokens</p>
-            <p class="mt-0.5 text-sm text-base-content/50">
-              Let a program read and change this organization's services and incidents over HTTP.
-            </p>
-          </div>
-          <.link
-            navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/api-tokens"}
-            class="btn btn-soft btn-sm"
-          >
-            Manage tokens
-          </.link>
-        </div>
-      </.card>
+              <div>
+                <.input field={@form[:slug]} type="text" label="Address" required />
+                <p class="-mt-1 text-xs text-base-content/50">
+                  Pages live at <code class="break-all">{url(~p"/orgs/#{slug_value(@form)}")}</code>
+                </p>
+              </div>
 
-      <.card class="mt-6 max-w-xl">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="font-medium">Notifications</p>
-            <p class="mt-0.5 text-sm text-base-content/50">
-              The webhook endpoints and email addresses that hear about incidents when they
-              open and resolve.
-            </p>
-          </div>
-          <.link
-            navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/notifiers"}
-            class="btn btn-soft btn-sm"
-          >
-            Manage notifiers
-          </.link>
-        </div>
-      </.card>
+              <div
+                :if={slug_changed?(@form, @organization)}
+                id="slug-warning"
+                class="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"
+              >
+                <.icon name="lucide-triangle-alert" class="mt-0.5 size-4 shrink-0 text-warning" />
+                <p>
+                  Changing the address changes every link to this organization. Existing links and
+                  bookmarks will stop working, including the public status page's.
+                </p>
+              </div>
+
+              <div class="flex justify-end">
+                <.button variant="primary" phx-disable-with="Saving...">Save changes</.button>
+              </div>
+            </.form>
+          </.card>
+        </.settings_section>
+
+        <.settings_section id="status-page" title="Status page">
+          <:description>
+            A page anybody can read without an account. Service names, statuses and uptime
+            appear on it; URLs, incident causes and timelines never do.
+          </:description>
+
+          <.card>
+            <.form
+              for={@status_page_form}
+              id="status-page-form"
+              phx-change="validate_status_page"
+              phx-submit="save_status_page"
+              class="space-y-4"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                  <.badge color={
+                    if(@organization.status_page_enabled, do: "success", else: "default")
+                  }>
+                    {if @organization.status_page_enabled, do: "Published", else: "Not published"}
+                  </.badge>
+                  <code class="break-all text-xs text-base-content/50">
+                    /status/{@organization.slug}
+                  </code>
+                </div>
+                <.button
+                  :if={@organization.status_page_enabled}
+                  navigate={~p"/status/#{@organization.slug}"}
+                  variant="ghost"
+                  size="sm"
+                >
+                  View the page <.icon name="lucide-arrow-up-right" class="size-4" />
+                </.button>
+              </div>
+
+              <.input
+                field={@status_page_form[:status_page_enabled]}
+                type="checkbox"
+                label="Publish a status page"
+              />
+
+              <.input
+                field={@status_page_form[:status_page_headline]}
+                type="text"
+                label="Headline"
+                placeholder="Live status of our services"
+              />
+
+              <div class="flex justify-end">
+                <.button variant="primary" phx-disable-with="Saving...">Save</.button>
+              </div>
+            </.form>
+          </.card>
+        </.settings_section>
+
+        <.settings_section id="integrations" title="Integrations">
+          <:description>
+            Where incidents are announced, and how programs talk to PulseOps.
+          </:description>
+
+          <.list_card id="integration-links" class="overflow-hidden">
+            <:item
+              :for={link <- integration_links(@current_scope)}
+              class="relative transition-colors hover:bg-base-200/50"
+            >
+              <div class="flex items-center gap-4">
+                <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-base-200 text-base-content/60">
+                  <.icon name={link.icon} class="size-4" />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <%!-- The link stretches over the whole row, so the row is the target
+                        without nesting anything interactive inside a link. --%>
+                  <.link navigate={link.href} class="font-medium after:absolute after:inset-0">
+                    {link.title}
+                  </.link>
+                  <p class="text-sm text-base-content/60">{link.description}</p>
+                </div>
+                <.icon name="lucide-chevron-right" class="size-4 shrink-0 text-base-content/40" />
+              </div>
+            </:item>
+          </.list_card>
+        </.settings_section>
+      </div>
     </Layouts.app>
     """
   end
+
+  attr :id, :string, required: true
+  attr :title, :string, required: true
+  slot :description, required: true
+  slot :inner_block, required: true
+
+  defp settings_section(assigns) do
+    ~H"""
+    <section
+      id={"settings-#{@id}"}
+      aria-labelledby={"settings-#{@id}-title"}
+      class="grid gap-4 py-8 first:pt-0 lg:grid-cols-3 lg:gap-8"
+    >
+      <div>
+        <h2 id={"settings-#{@id}-title"} class="font-semibold">{@title}</h2>
+        <p class="mt-1 text-sm text-base-content/60">{render_slot(@description)}</p>
+      </div>
+      <div class="lg:col-span-2">
+        {render_slot(@inner_block)}
+      </div>
+    </section>
+    """
+  end
+
+  defp integration_links(scope) do
+    slug = scope.organization.slug
+
+    [
+      %{
+        title: "Notifiers",
+        icon: "lucide-bell",
+        href: ~p"/orgs/#{slug}/settings/notifiers",
+        description:
+          "The webhook endpoints and email addresses that hear about incidents as they open and resolve."
+      },
+      %{
+        title: "API tokens",
+        icon: "lucide-key-round",
+        href: ~p"/orgs/#{slug}/settings/api-tokens",
+        description: "Let a program read and change services and incidents over HTTP."
+      }
+    ]
+  end
+
+  defp slug_value(form), do: Form.input_value(form, :slug) || ""
+
+  # The warning is about a change, so it only appears once there is one.
+  defp slug_changed?(form, organization), do: slug_value(form) != organization.slug
 end

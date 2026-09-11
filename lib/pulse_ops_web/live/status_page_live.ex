@@ -15,6 +15,7 @@ defmodule PulseOpsWeb.StatusPageLive do
   use PulseOpsWeb, :live_view
 
   import PulseOpsWeb.MonitoringComponents
+  import PulseOpsWeb.UIComponents
 
   alias PulseOps.StatusPage
 
@@ -105,9 +106,7 @@ defmodule PulseOpsWeb.StatusPageLive do
         </section>
 
         <section :if={@maintenance != []} class="mb-8">
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-            Planned maintenance
-          </h2>
+          <.section_heading title="Planned maintenance" />
           <ul class="space-y-2">
             <li
               :for={window <- @maintenance}
@@ -124,9 +123,7 @@ defmodule PulseOpsWeb.StatusPageLive do
         </section>
 
         <section :if={@active_incidents != []} class="mb-8">
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-            Open incidents
-          </h2>
+          <.section_heading title="Open incidents" />
           <ul class="space-y-2">
             <li
               :for={incident <- @active_incidents}
@@ -147,22 +144,19 @@ defmodule PulseOpsWeb.StatusPageLive do
         </section>
 
         <section class="mb-8">
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-            Services
-          </h2>
+          <.section_heading title="Services" />
 
-          <p
+          <.empty_state
             :if={@services == []}
-            class="rounded-box border border-base-300 p-6 text-sm text-base-content/60"
+            id="status-services-empty"
+            icon="lucide-eye-off"
+            title="Nothing is published here yet"
           >
-            Nothing is published here yet.
-          </p>
+            <:subtitle>{@organization.name} has not made any of its services public.</:subtitle>
+          </.empty_state>
 
-          <ul
-            :if={@services != []}
-            class="divide-y divide-base-300 rounded-box border border-base-300"
-          >
-            <li :for={service <- @services} class="p-4 sm:p-5">
+          <.list_card :if={@services != []} id="status-services">
+            <:item :for={service <- @services}>
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="min-w-0">
                   <p class="font-medium">{service.name}</p>
@@ -187,18 +181,16 @@ defmodule PulseOpsWeb.StatusPageLive do
                   {format_percent(Map.get(@uptime, service.id))} over 24h
                 </span>
               </div>
-            </li>
-          </ul>
+            </:item>
+          </.list_card>
         </section>
 
         <section :if={@past_incidents != []}>
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-            Recent history
-          </h2>
-          <ul class="divide-y divide-base-300 rounded-box border border-base-300">
-            <li
+          <.section_heading title="Recent history" />
+          <.list_card id="status-history">
+            <:item
               :for={incident <- @past_incidents}
-              class="flex flex-wrap items-center justify-between gap-2 p-4"
+              class="flex flex-wrap items-center justify-between gap-2"
             >
               <div class="min-w-0">
                 <p class="text-sm font-medium">{incident.title}</p>
@@ -208,8 +200,8 @@ defmodule PulseOpsWeb.StatusPageLive do
                 </p>
               </div>
               <.severity_tag severity={incident.severity} />
-            </li>
-          </ul>
+            </:item>
+          </.list_card>
         </section>
 
         <footer class="mt-10 text-center text-xs text-base-content/40">

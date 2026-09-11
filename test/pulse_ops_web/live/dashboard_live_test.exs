@@ -9,14 +9,55 @@ defmodule PulseOpsWeb.DashboardLiveTest do
   alias PulseOps.Incidents
   alias PulseOps.Monitoring
   alias PulseOps.Monitoring.AlertRule
+  alias PulseOps.Organizations.Membership
+  alias PulseOps.Repo
 
   setup :register_and_log_in_user_with_org
 
+  defp demote(scope, user, role) do
+    Repo.get_by!(Membership, organization_id: scope.organization.id, user_id: user.id)
+    |> Ecto.Changeset.change(role: role)
+    |> Repo.update!()
+  end
+
   describe "rendering" do
     test "invites the user to add a service when there are none", %{conn: conn, scope: scope} do
-      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
+      {:ok, live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
 
       assert html =~ "Nothing is being watched yet"
+      assert has_element?(live, "#dashboard-services-empty a", "Add the first service")
+      # The empty state carries the action; a second button above it would repeat it.
+      refute has_element?(live, "#new-service")
+    end
+
+    test "tells a viewer with no services who adds them",
+         %{conn: conn, scope: scope, user: user} do
+      demote(scope, user, :viewer)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
+
+      assert has_element?(live, "#dashboard-services-empty", "Once an owner or admin")
+      refute has_element?(live, "#dashboard-services-empty a")
+    end
+
+    test "offers a new service from the dashboard once some exist", %{conn: conn, scope: scope} do
+      service_fixture(scope)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
+
+      assert has_element?(
+               live,
+               ~s(#new-service[href="/orgs/#{scope.organization.slug}/services/new"])
+             )
+    end
+
+    test "does not offer a new service to a viewer", %{conn: conn, scope: scope, user: user} do
+      service_fixture(scope)
+      demote(scope, user, :viewer)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}")
+
+      refute has_element?(live, "#new-service")
     end
 
     test "lists services with their status", %{conn: conn, scope: scope} do

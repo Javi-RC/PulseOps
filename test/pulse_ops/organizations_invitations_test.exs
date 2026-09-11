@@ -157,6 +157,14 @@ defmodule PulseOps.OrganizationsInvitationsTest do
       assert user.id == existing.id
       # The membership they already had, not a second one.
       assert membership.role == :viewer
+
+      assert Repo.aggregate(
+               from(m in Membership,
+                 where: m.organization_id == ^scope.organization.id and m.user_id == ^user.id
+               ),
+               :count
+             ) == 1
+
       assert Organizations.accept_invitation(token) == {:error, :invalid_invitation}
     end
 

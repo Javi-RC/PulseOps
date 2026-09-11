@@ -268,6 +268,43 @@ defmodule PulseOpsWeb.ServiceLiveTest do
       assert html =~ "Service updated"
       assert html =~ "Payments API v2"
     end
+
+    test "folds the request settings away until they are wanted", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      assert has_element?(live, "#advanced-settings.hidden")
+      assert has_element?(live, ~s(#advanced-toggle[aria-expanded="false"]), "GET · any 2xx")
+
+      live |> element("#advanced-toggle") |> render_click()
+
+      refute has_element?(live, "#advanced-settings.hidden")
+      assert has_element?(live, ~s(#advanced-toggle[aria-expanded="true"]))
+    end
+
+    test "keeps the request settings open for a service that uses them", %{
+      conn: conn,
+      scope: scope
+    } do
+      service = service_fixture(scope, %{expected_status: 204})
+
+      {:ok, live, _html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/services/#{service}/edit")
+
+      refute has_element?(live, "#advanced-settings.hidden")
+      assert has_element?(live, "#advanced-toggle", "expects 204")
+    end
+
+    test "opens the request settings to show an error inside them", %{conn: conn, scope: scope} do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/services/new")
+
+      live
+      |> form("#service-form",
+        service: Map.put(@create_attrs, :request_headers_text, "this is not a header")
+      )
+      |> render_change()
+
+      refute has_element?(live, "#advanced-settings.hidden")
+    end
   end
 
   describe "Show" do

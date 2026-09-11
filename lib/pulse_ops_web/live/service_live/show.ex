@@ -144,39 +144,45 @@ defmodule PulseOpsWeb.ServiceLive.Show do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
-      <.link
-        navigate={~p"/orgs/#{@current_scope.organization.slug}/services"}
-        class="text-sm text-base-content/60 hover:underline"
-      >
-        &larr; All services
-      </.link>
+      <.breadcrumb>
+        <:item navigate={~p"/orgs/#{@current_scope.organization.slug}/services"}>Services</:item>
+        <:item>{@service.name}</:item>
+      </.breadcrumb>
 
-      <div class="mt-2 mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-semibold">{@service.name}</h1>
-          <p class="mt-1 text-sm text-base-content/60">
-            {@service.environment} ·
-            <a href={@service.url} class="link" target="_blank" rel="noreferrer">{@service.url}</a>
-          </p>
-          <p :if={@service.description} class="mt-1 text-sm text-base-content/60">
-            {@service.description}
-          </p>
-        </div>
-
-        <div class="flex items-center gap-3">
-          <.status_badge status={@service.status} class="text-lg" />
-          <.link
+      <.page_header title={@service.name}>
+        <:subtitle>
+          {@service.environment}
+          <span class="text-base-content/30">·</span>
+          <a
+            href={@service.url}
+            target="_blank"
+            rel="noreferrer"
+            class="link break-all text-base-content/60"
+          >
+            {@service.url}
+          </a>
+          <span :if={@service.description}>
+            <span class="text-base-content/30">·</span> {@service.description}
+          </span>
+        </:subtitle>
+        <:actions>
+          <.status_badge
+            status={@service.status}
+            class="rounded-full border border-base-300 px-3 py-1"
+          />
+          <.button
             :if={@can_manage?}
             navigate={
               ~p"/orgs/#{@current_scope.organization.slug}/services/#{@service}/edit?return_to=show"
             }
-            class="btn btn-sm"
+            size="sm"
           >
             Edit
-          </.link>
-        </div>
-      </div>
+          </.button>
+        </:actions>
+      </.page_header>
 
       <div
         :if={@monitor_state == :stopped}
@@ -210,12 +216,12 @@ defmodule PulseOpsWeb.ServiceLive.Show do
         <div class="min-w-0 flex-1 text-sm">
           Open incident since <.relative_time at={@open_incident.started_at} />
         </div>
-        <.link
+        <.button
           navigate={~p"/orgs/#{@current_scope.organization.slug}/incidents/#{@open_incident}"}
-          class="btn btn-sm"
+          size="sm"
         >
           Open incident
-        </.link>
+        </.button>
       </div>
 
       <.card :if={@demo_target?} class="mb-6 border-dashed">
@@ -223,28 +229,22 @@ defmodule PulseOpsWeb.ServiceLive.Show do
           <.icon name="lucide-flask-conical" class="size-5 text-base-content/40" />
           <div class="min-w-0 flex-1 text-sm">
             <span class="font-medium">Demo controls</span>
+            <.badge size="xs" class="ml-1 align-middle">Development only</.badge>
             <span class="text-base-content/60">
               — break this endpoint on purpose and watch an incident open by itself.
             </span>
           </div>
-          <button phx-click="break_demo_service" class="btn btn-sm">Break it</button>
-          <button phx-click="heal_demo_service" class="btn btn-sm">Fix it</button>
+          <.button phx-click="break_demo_service" size="sm">Break it</.button>
+          <.button phx-click="heal_demo_service" size="sm">Fix it</.button>
         </div>
       </.card>
 
-      <div class="mb-3 flex items-center justify-end">
-        <nav id="window-selector" class="join" aria-label="Time window">
-          <.link
-            :for={window <- @windows}
-            patch={
-              ~p"/orgs/#{@current_scope.organization.slug}/services/#{@service}?window=#{window}"
-            }
-            class={["btn btn-sm join-item", window == @window && "btn-active"]}
-            aria-current={window == @window && "true"}
-          >
-            {window}
-          </.link>
-        </nav>
+      <div class="mb-3 flex justify-end">
+        <.window_selector
+          windows={@windows}
+          selected={@window}
+          href_fn={&window_route(@current_scope, @service, &1)}
+        />
       </div>
 
       <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -277,7 +277,7 @@ defmodule PulseOpsWeb.ServiceLive.Show do
       </section>
 
       <section class="mb-8">
-        <h2 class="mb-2 text-lg font-medium">Recent checks</h2>
+        <.section_heading title="Recent checks" />
         <.uptime_bar checks={@checks} />
         <p class="mt-2 text-xs text-base-content/50">
           The last {length(@checks)} probes, oldest to newest, whatever window the figures above
@@ -286,6 +286,10 @@ defmodule PulseOpsWeb.ServiceLive.Show do
       </section>
     </Layouts.app>
     """
+  end
+
+  defp window_route(scope, service, window) do
+    ~p"/orgs/#{scope.organization.slug}/services/#{service}?window=#{window}"
   end
 
   # Only says something when there is something to say: a certificate with

@@ -79,6 +79,7 @@ defmodule PulseOpsWeb.ApiTokenLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="API tokens">
         <:subtitle>
@@ -95,7 +96,7 @@ defmodule PulseOpsWeb.ApiTokenLive.Index do
               revoke it and make another.
             </p>
           </div>
-          <button phx-click="dismiss" class="btn btn-ghost btn-sm">Done</button>
+          <.button phx-click="dismiss" variant="ghost" size="sm">Done</.button>
         </div>
 
         <pre class="mt-3 overflow-x-auto rounded-lg bg-base-300 p-3 text-sm"><code>{@revealed.plaintext}</code></pre>
@@ -117,18 +118,24 @@ defmodule PulseOpsWeb.ApiTokenLive.Index do
         </.form>
       </.card>
 
-      <p
+      <.empty_state
         :if={@tokens == []}
-        class="rounded-box border border-base-300 p-6 text-sm text-base-content/60"
+        id="api-tokens-empty"
+        icon="lucide-key-round"
+        title="No tokens yet"
       >
-        No tokens yet.
-      </p>
+        <:subtitle>
+          <%= if @can_manage? do %>
+            Name one above and a script or CI pipeline can read and change this organization's
+            services and incidents.
+          <% else %>
+            An owner or admin can create one when a script needs access.
+          <% end %>
+        </:subtitle>
+      </.empty_state>
 
-      <ul :if={@tokens != []} class="divide-y divide-base-300 rounded-box border border-base-300">
-        <li
-          :for={token <- @tokens}
-          class="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5"
-        >
+      <.list_card :if={@tokens != []} id="api-tokens">
+        <:item :for={token <- @tokens} class="flex flex-wrap items-center justify-between gap-3">
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-medium">{token.name}</span>
@@ -140,17 +147,19 @@ defmodule PulseOpsWeb.ApiTokenLive.Index do
             </p>
           </div>
 
-          <button
+          <.button
             :if={@can_manage? and Token.active?(token)}
             phx-click="revoke"
             phx-value-id={token.id}
             data-confirm={"Revoke #{token.name}? Anything using it stops working immediately."}
-            class="btn btn-soft btn-sm btn-error"
+            data-confirm-label="Revoke token"
+            variant="danger-ghost"
+            size="sm"
           >
             Revoke
-          </button>
-        </li>
-      </ul>
+          </.button>
+        </:item>
+      </.list_card>
 
       <.card class="mt-6">
         <p class="font-medium">Using it</p>

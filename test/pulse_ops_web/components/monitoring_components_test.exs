@@ -30,7 +30,7 @@ defmodule PulseOpsWeb.MonitoringComponentsTest do
       html = render_component(&status_badge/1, status: :down)
 
       assert html =~ "Down"
-      assert html =~ "#d03b3b"
+      assert html =~ "var(--color-error)"
       # A distinct icon per status, so the badge still reads in greyscale.
       assert html =~ "lucide-circle-x"
     end

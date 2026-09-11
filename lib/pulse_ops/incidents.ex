@@ -35,10 +35,37 @@ defmodule PulseOps.Incidents do
     Phoenix.PubSub.subscribe(PulseOps.PubSub, topic(scope.organization.id))
   end
 
+  @doc """
+  Subscribes to `:active_incident_count_changed`, sent whenever an incident opens
+  or resolves in the scoped organization.
+
+  A topic of its own rather than a filter on `subscribe_incidents/1`: the
+  application shell listens on every page, including the pages already
+  subscribed to incidents, and a second subscription to the same topic would
+  hand each of them every message twice.
+  """
+  def subscribe_active_incident_count(%Scope{} = scope) do
+    Phoenix.PubSub.subscribe(PulseOps.PubSub, count_topic(scope.organization.id))
+  end
+
   defp topic(organization_id), do: "organization:#{organization_id}:incidents"
 
-  defp broadcast(organization_id, message) do
+  defp count_topic(organization_id),
+    do: "organization:#{organization_id}:active_incident_count"
+
+  defp broadcast(organization_id, {event, _incident} = message) do
     Phoenix.PubSub.broadcast(PulseOps.PubSub, topic(organization_id), message)
+
+    # Only opening and resolving change how many are open; an update does not.
+    if event in [:incident_opened, :incident_resolved] do
+      Phoenix.PubSub.broadcast(
+        PulseOps.PubSub,
+        count_topic(organization_id),
+        :active_incident_count_changed
+      )
+    end
+
+    :ok
   end
 
   ## Monitor-facing API
@@ -346,13 +373,8 @@ defmodule PulseOps.Incidents do
          :ok <- ensure_open(incident) do
       Multi.new()
       |> Multi.update(:incident, Incident.workflow_changeset(incident, attrs))
-      |> Multi.insert(:event, fn %{incident: updated} ->
-        IncidentEvent.changeset(%IncidentEvent{}, %{
-          incident_id: updated.id,
-          user_id: scope.user.id,
-          type: :status_changed,
-          description: "Status changed to #{updated.status}"
-        })
+      |> Multi.run(:event, fn repo, %{incident: updated} ->
+        record_status_change(repo, scope, incident, updated)
       end)
       |> Repo.transaction()
       |> case do
@@ -364,6 +386,23 @@ defmodule PulseOps.Incidents do
           {:error, changeset}
       end
     end
+  end
+
+  # Saving a cause or a severity carries the current status along unchanged. Only
+  # an actual move earns a line on the timeline; otherwise every saved cause would
+  # log a "status changed" that never happened.
+  defp record_status_change(_repo, _scope, %Incident{status: status}, %Incident{status: status}),
+    do: {:ok, nil}
+
+  defp record_status_change(repo, scope, _before, updated) do
+    %IncidentEvent{}
+    |> IncidentEvent.changeset(%{
+      incident_id: updated.id,
+      user_id: scope.user.id,
+      type: :status_changed,
+      description: "Status changed to #{updated.status}"
+    })
+    |> repo.insert()
   end
 
   @doc """

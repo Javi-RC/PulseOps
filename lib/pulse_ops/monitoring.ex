@@ -8,6 +8,7 @@ defmodule PulseOps.Monitoring do
   alias PulseOps.Accounts.Scope
   alias PulseOps.Monitoring.AlertRule
   alias PulseOps.Monitoring.Check
+  alias PulseOps.Monitoring.HealthCheck
   alias PulseOps.Monitoring.HealthCheck.Result
   alias PulseOps.Monitoring.MonitorSupervisor
   alias PulseOps.Monitoring.Rollup
@@ -143,6 +144,44 @@ defmodule PulseOps.Monitoring do
       broadcast_service(scope, {:deleted, service})
       {:ok, service}
     end
+  end
+
+  @doc """
+  Probes a service once, exactly the way its monitor would, and records nothing.
+
+  For trying a URL before it is saved, so `service` may be unsaved — built from a
+  form. The request goes through the same client, with the same options and the
+  same `UrlGuard`, which is what makes a passing test a statement about what the
+  monitor will see rather than about some other request.
+
+  Saving a service is what it takes to make PulseOps send requests on a tenant's
+  behalf, so testing one needs the same permission.
+  """
+  @spec test_service(Scope.t(), Service.t()) ::
+          {:ok, Result.t()} | {:error, Result.t()} | {:error, :unauthorized}
+  def test_service(%Scope{} = scope, %Service{} = service) do
+    with :ok <- Organizations.authorize(scope, :manage_services) do
+      HealthCheck.client().check(service.url, check_options(service))
+    end
+  end
+
+  @doc """
+  How a service wants to be probed, as options for a `HealthCheck` client.
+
+  Built here rather than in the client, so the client stays a plain function of
+  a URL and options and never learns what a Service is — and in one place, so
+  the monitor and a one-off test cannot build the request differently.
+  """
+  @spec check_options(Service.t()) :: keyword()
+  def check_options(%Service{} = service) do
+    [
+      timeout_ms: service.timeout_ms,
+      method: service.http_method,
+      headers: Map.to_list(service.request_headers || %{}),
+      body: service.request_body,
+      expected_status: service.expected_status,
+      body_assertion: service.body_assertion
+    ]
   end
 
   @doc """

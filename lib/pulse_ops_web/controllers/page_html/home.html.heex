@@ -1,95 +1,156 @@
 <Layouts.public flash={@flash} current_scope={@current_scope}>
-  <section class="py-10 text-center sm:py-16">
-    <p class="mb-3 inline-flex items-center gap-2 rounded-full border border-base-300 bg-base-100 px-3 py-1 text-xs text-base-content/60">
-      <span class="inline-block size-1.5 rounded-full" style="background: #0ca30c"></span>
-      Built on Elixir and OTP
-    </p>
+  <%!-- Hero: what it is and a way in on the left, the product itself on the right. --%>
+  <section class="grid items-center gap-10 py-6 sm:py-12 lg:grid-cols-2 lg:gap-12">
+    <div class="text-center lg:text-left">
+      <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-base-300 bg-base-100 px-3 py-1 text-xs text-base-content/60">
+        <span class="relative flex size-2">
+          <span class="absolute inline-flex size-full rounded-full bg-success opacity-60 motion-safe:animate-ping"></span>
+          <span class="relative inline-flex size-2 rounded-full bg-success"></span>
+        </span>
+        Real-time monitoring, built on Elixir and OTP
+      </p>
 
-    <h1 class="mx-auto max-w-2xl text-4xl font-semibold tracking-tight sm:text-5xl">
-      Know a service is down before somebody tells you
-    </h1>
+      <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-[3.25rem] lg:leading-[1.1]">
+        Know a service is down before somebody tells you
+      </h1>
 
-    <p class="mx-auto mt-4 max-w-xl text-base-content/70">
-      PulseOps watches every service you register from its own supervised process, decides when
-      something is genuinely broken rather than briefly flaky, and opens an incident on its own.
-      Your dashboard updates as it happens.
-    </p>
+      <p class="mx-auto mt-5 max-w-xl text-lg text-base-content/70 lg:mx-0">
+        PulseOps watches every service you register from its own supervised process, tells a real
+        outage from a brief blip, opens the incident on its own and tells your team. Your dashboard
+        updates the moment it happens.
+      </p>
 
-    <div class="mt-7 flex flex-wrap justify-center gap-3">
-      <.link navigate={~p"/users/register"} class="btn btn-primary">
-        Start monitoring <.icon name="lucide-arrow-right" class="size-4" />
-      </.link>
-      <.link navigate={~p"/users/log-in"} class="btn btn-ghost">I already have an account</.link>
+      <div class="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
+        <.button navigate={~p"/users/register"} variant="primary">
+          Start monitoring <.icon name="lucide-arrow-right" class="size-4" />
+        </.button>
+        <.button navigate={~p"/users/log-in"} variant="ghost">I already have an account</.button>
+      </div>
+
+      <p class="mt-4 text-xs text-base-content/50">
+        Sign up with just an email.
+        <a href={github_url()} class="link link-hover" rel="noopener">Read the source on GitHub</a>
+      </p>
+    </div>
+
+    <.product_preview />
+  </section>
+
+  <%!-- Facts, each one checkable in the product or the code. --%>
+  <section aria-label="At a glance" class="py-6">
+    <ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <li
+        :for={fact <- facts()}
+        class="flex items-start gap-3 rounded-box border border-base-300 bg-base-100 p-4"
+      >
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <.icon name={fact.icon} class="size-5" />
+        </span>
+        <div class="min-w-0">
+          <p class="font-medium">{fact.title}</p>
+          <p class="text-sm text-base-content/60">{fact.body}</p>
+        </div>
+      </li>
+    </ul>
+  </section>
+
+  <section id="features" aria-labelledby="features-title" class="py-12 sm:py-16">
+    <div class="mx-auto max-w-2xl text-center">
+      <h2 id="features-title" class="text-3xl font-semibold tracking-tight">
+        Everything between "is it up?" and "who is on it?"
+      </h2>
+      <p class="mt-3 text-base-content/70">
+        Checks, incidents, paging and a page for your customers — in one place, without an agent to
+        install.
+      </p>
+    </div>
+
+    <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <li
+        :for={feature <- features()}
+        class="rounded-box border border-base-300 bg-base-100 p-5 transition-colors hover:border-base-content/20"
+      >
+        <span class="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <.icon name={feature.icon} class="size-5" />
+        </span>
+        <h3 class="mt-3 font-medium">{feature.title}</h3>
+        <p class="mt-1 text-sm text-base-content/60">{feature.body}</p>
+      </li>
+    </ul>
+  </section>
+
+  <section
+    id="status-page"
+    aria-labelledby="status-page-title"
+    class="grid items-center gap-8 rounded-box border border-base-300 bg-base-100 p-6 sm:p-10 lg:grid-cols-2"
+  >
+    <div>
+      <p class="text-sm font-medium text-primary">For your customers</p>
+      <h2 id="status-page-title" class="mt-1 text-2xl font-semibold tracking-tight">
+        A status page that updates itself
+      </h2>
+      <p class="mt-3 text-base-content/70">
+        Publish one page anybody can read without an account, live over the same connection the
+        dashboard uses. Planned maintenance is shown as planned, not as an outage.
+      </p>
+      <ul class="mt-4 space-y-2 text-sm text-base-content/70">
+        <li class="flex gap-2">
+          <.icon name="lucide-check" class="mt-0.5 size-4 shrink-0 text-success" />
+          Service names, status and uptime — never URLs, causes or timelines
+        </li>
+        <li class="flex gap-2">
+          <.icon name="lucide-check" class="mt-0.5 size-4 shrink-0 text-success" />
+          Choose which services appear, one checkbox each
+        </li>
+        <li class="flex gap-2">
+          <.icon name="lucide-check" class="mt-0.5 size-4 shrink-0 text-success" />
+          Unpublished looks exactly like it does not exist
+        </li>
+      </ul>
+    </div>
+
+    <%!-- Decorative, like the dashboard preview: the list beside it says the same. --%>
+    <div aria-hidden="true" class="rounded-box border border-base-300 bg-base-200/60 p-4 sm:p-5">
+      <p class="font-semibold">Acme</p>
+      <div class="mt-3 flex items-center gap-3 rounded-box border border-success/40 bg-success/5 p-3 text-success">
+        <.icon name="lucide-circle-check" class="size-5 shrink-0" />
+        <p class="text-sm font-medium">All systems operational</p>
+      </div>
+      <ul class="mt-3 divide-y divide-base-300 rounded-box border border-base-300 bg-base-100">
+        <li :for={service <- status_page_services()} class="flex items-center gap-3 px-3 py-2.5">
+          <span class="min-w-0 flex-1 truncate text-sm font-medium">{service.name}</span>
+          <span class="text-xs tabular-nums text-base-content/50">{service.uptime}</span>
+          <.status_badge status={service.status} class="text-sm" />
+        </li>
+      </ul>
     </div>
   </section>
 
-  <section class="grid gap-4 py-8 sm:grid-cols-3">
-    <div class="rounded-box border border-base-300 bg-base-100 p-5">
-      <span class="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        <.icon name="lucide-shield-check" class="size-5" />
-      </span>
-      <h2 class="mt-3 font-medium">One process per service</h2>
-      <p class="mt-1 text-sm text-base-content/60">
-        A service whose endpoint misbehaves cannot affect the monitoring of any other. If its
-        process dies, the supervisor replaces it and the rest never notice.
+  <section id="how-it-works" class="py-12 sm:py-16">
+    <div class="mx-auto mb-8 max-w-2xl text-center">
+      <p class="text-sm font-medium text-primary">For the engineers</p>
+      <h2 class="mt-1 text-3xl font-semibold tracking-tight">How it works inside</h2>
+      <p class="mt-3 text-base-content/70">
+        Health checks are driven by long-lived OTP processes, not by requests. The web layer only
+        reads state and listens for changes.
       </p>
     </div>
 
-    <div class="rounded-box border border-base-300 bg-base-100 p-5">
-      <span class="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        <.icon name="lucide-zap" class="size-5" />
-      </span>
-      <h2 class="mt-3 font-medium">Real time, not refreshed</h2>
-      <p class="mt-1 text-sm text-base-content/60">
-        Status changes are pushed over a WebSocket the moment a monitor sees them. Open the
-        network tab: there are no polling requests, because there is no polling.
-      </p>
-    </div>
-
-    <div class="rounded-box border border-base-300 bg-base-100 p-5">
-      <span class="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        <.icon name="lucide-siren" class="size-5" />
-      </span>
-      <h2 class="mt-3 font-medium">Incidents that close themselves</h2>
-      <p class="mt-1 text-sm text-base-content/60">
-        Three failed checks open an incident with the reason attached; two good ones resolve it.
-        You add the part a monitor cannot know — the root cause.
-      </p>
-    </div>
-  </section>
-
-  <section class="py-8">
-    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
+    <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
       What happens on every check
-    </h2>
+    </h3>
 
     <figure class="flow-diagram rounded-box border border-base-300 bg-base-100 p-4">
       <style>
+        /* Built from the theme's own colours, so it follows light and dark with
+           the rest of the page instead of keeping a palette of its own. */
         .flow-diagram {
-          --flow-node: #ffffff;
-          --flow-border: #d4d4d8;
-          --flow-ink: #18181b;
-          --flow-muted: #71717a;
-          --flow-edge: #a1a1aa;
-          --flow-accent: #7c3aed;
-        }
-        @media (prefers-color-scheme: dark) {
-          :root:where(:not([data-theme="light"])) .flow-diagram {
-            --flow-node: #27272a;
-            --flow-border: #3f3f46;
-            --flow-ink: #fafafa;
-            --flow-muted: #a1a1aa;
-            --flow-edge: #52525b;
-            --flow-accent: #a78bfa;
-          }
-        }
-        :root[data-theme="dark"] .flow-diagram {
-          --flow-node: #27272a;
-          --flow-border: #3f3f46;
-          --flow-ink: #fafafa;
-          --flow-muted: #a1a1aa;
-          --flow-edge: #52525b;
-          --flow-accent: #a78bfa;
+          --flow-node: var(--color-base-100);
+          --flow-border: var(--color-base-300);
+          --flow-ink: var(--color-base-content);
+          --flow-muted: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+          --flow-edge: color-mix(in oklab, var(--color-base-content) 35%, transparent);
+          --flow-accent: var(--color-primary);
         }
 
         /* A travelling dash is what an "animated" edge in a node graph actually
@@ -118,12 +179,13 @@
         }
       </style>
 
-      <div class="overflow-x-auto">
+      <%!-- Too wide to read on a phone, where the steps below are shown instead. --%>
+      <div class="overflow-x-auto max-sm:hidden">
         <svg
-          viewBox="0 0 880 300"
+          viewBox="0 0 880 452"
           class="h-auto w-full min-w-[760px]"
           role="img"
-          aria-label="A jittered timer starts a supervised task, which probes your endpoint over HTTP. The result comes back to the monitor as a message. Every probe is recorded, and only a change of status opens or resolves an incident and reaches your dashboard."
+          aria-label="A jittered timer starts a supervised task, which probes your endpoint over HTTP; the result comes back to the monitor as a message. Every check is recorded and pushed to that service's own page. The monitor then asks whether the status changed. If it did, the new status is saved and broadcast to the dashboard and the status page, and if the service went down or recovered, an incident is opened or resolved and broadcast too. If it did not, no status is broadcast."
         >
           <defs>
             <marker
@@ -150,24 +212,27 @@
             </marker>
           </defs>
 
+          <%!-- What happens on every single probe: neutral. --%>
           <g stroke="var(--flow-edge)" marker-end="url(#flow-arrow)">
             <path class="flow-edge" d="M184,65 L222,65" />
             <path class="flow-edge" d="M420,65 L458,65" />
             <path class="flow-edge" d="M632,65 L670,65" />
-            <path
-              class="flow-edge"
-              d="M770,94 L770,128 Q770,138 760,138 L568,138 Q558,138 558,148 L558,190"
-            />
+            <path class="flow-edge" d="M770,94 L770,144" />
+            <path class="flow-edge" d="M676,179 L638,179" />
+            <path class="flow-edge" d="M770,208 L770,258" />
           </g>
 
-          <%!-- The branch that only fires on a change of status is the one that
-                carries colour, because that is the part worth noticing. --%>
+          <%!-- What only happens when the status changed carries the colour,
+                because that is the part worth noticing. --%>
           <g stroke="var(--flow-accent)" marker-end="url(#flow-arrow-accent)">
-            <path class="flow-edge" d="M464,225 L440,225" />
-            <path class="flow-edge" d="M196,225 L168,225" />
+            <path class="flow-edge" d="M676,293 L638,293" />
+            <path class="flow-edge" d="M464,293 L426,293" />
+            <path class="flow-edge" d="M548,322 L548,372" />
+            <path class="flow-edge" d="M438,407 L334,407 Q324,407 324,397 L324,328" />
           </g>
 
           <g font-size="13" font-weight="600" fill="var(--flow-ink)">
+            <%!-- Row 1: the probe --%>
             <g>
               <rect
                 x="16"
@@ -264,20 +329,21 @@
               </text>
             </g>
 
+            <%!-- Row 2: every check --%>
             <g>
               <rect
-                x="464"
-                y="196"
+                x="676"
+                y="150"
                 width="188"
                 height="58"
                 rx="10"
                 fill="var(--flow-node)"
                 stroke="var(--flow-border)"
               />
-              <text x="558" y="221" text-anchor="middle">Record the check</text>
+              <text x="770" y="175" text-anchor="middle">Record the check</text>
               <text
-                x="558"
-                y="239"
+                x="770"
+                y="193"
                 text-anchor="middle"
                 font-size="11"
                 font-weight="400"
@@ -289,41 +355,89 @@
 
             <g>
               <rect
-                x="202"
-                y="196"
-                width="238"
+                x="464"
+                y="150"
+                width="168"
                 height="58"
                 rx="10"
                 fill="var(--flow-node)"
-                stroke="var(--flow-accent)"
+                stroke="var(--flow-border)"
               />
-              <text x="321" y="221" text-anchor="middle">Open or resolve an incident</text>
+              <text x="548" y="175" text-anchor="middle">Service page</text>
               <text
-                x="321"
-                y="239"
+                x="548"
+                y="193"
                 text-anchor="middle"
                 font-size="11"
                 font-weight="400"
                 fill="var(--flow-muted)"
               >
-                only when the status changed
+                sees every check live
+              </text>
+            </g>
+
+            <%!-- Row 3: the decision, and what a change sets off --%>
+            <g>
+              <rect
+                x="676"
+                y="264"
+                width="188"
+                height="58"
+                rx="10"
+                fill="var(--flow-node)"
+                stroke="var(--flow-border)"
+                stroke-dasharray="4 3"
+              />
+              <text x="770" y="289" text-anchor="middle">Status changed?</text>
+              <text
+                x="770"
+                y="307"
+                text-anchor="middle"
+                font-size="11"
+                font-weight="400"
+                fill="var(--flow-muted)"
+              >
+                new status vs. the last one
               </text>
             </g>
 
             <g>
               <rect
-                x="16"
-                y="196"
-                width="152"
+                x="464"
+                y="264"
+                width="168"
                 height="58"
                 rx="10"
                 fill="var(--flow-node)"
                 stroke="var(--flow-accent)"
               />
-              <text x="92" y="221" text-anchor="middle">Your screen</text>
+              <text x="548" y="289" text-anchor="middle">Update the status</text>
               <text
-                x="92"
-                y="239"
+                x="548"
+                y="307"
+                text-anchor="middle"
+                font-size="11"
+                font-weight="400"
+                fill="var(--flow-muted)"
+              >
+                saved and broadcast
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="228"
+                y="264"
+                width="192"
+                height="58"
+                rx="10"
+                fill="var(--flow-node)"
+                stroke="var(--flow-accent)"
+              />
+              <text x="324" y="289" text-anchor="middle">Dashboard, status page</text>
+              <text
+                x="324"
+                y="307"
                 text-anchor="middle"
                 font-size="11"
                 font-weight="400"
@@ -332,11 +446,39 @@
                 over the socket
               </text>
             </g>
+
+            <%!-- Row 4: incidents follow only two of the possible changes --%>
+            <g>
+              <rect
+                x="438"
+                y="378"
+                width="220"
+                height="58"
+                rx="10"
+                fill="var(--flow-node)"
+                stroke="var(--flow-accent)"
+              />
+              <text x="548" y="403" text-anchor="middle">Open or resolve an incident</text>
+              <text
+                x="548"
+                y="421"
+                text-anchor="middle"
+                font-size="11"
+                font-weight="400"
+                fill="var(--flow-muted)"
+              >
+                only on going down or recovering
+              </text>
+            </g>
           </g>
 
-          <text x="770" y="120" text-anchor="middle" font-size="11" fill="var(--flow-muted)">
-            the result arrives as a message
-          </text>
+          <g font-size="11" fill="var(--flow-muted)">
+            <text x="760" y="124" text-anchor="end">the result, as a message</text>
+            <text x="657" y="286" text-anchor="middle" fill="var(--flow-accent)" font-weight="600">
+              yes
+            </text>
+            <text x="770" y="342" text-anchor="middle">no: no status is broadcast</text>
+          </g>
         </svg>
       </div>
 
@@ -346,18 +488,45 @@
         reconfigured, or shut down cleanly.
       </figcaption>
 
-      <details class="mt-2">
+      <details class="mt-2 max-sm:hidden">
         <summary class="cursor-pointer text-xs text-base-content/50">Read it as steps</summary>
-        <ol class="mt-2 list-decimal space-y-1 pl-5 text-sm text-base-content/70">
-          <li>A timer fires, spread by up to 10% so monitors never probe in lockstep.</li>
-          <li>The probe runs in a supervised task, off the monitor's own callback.</li>
-          <li>Your endpoint answers, times out, or refuses the connection.</li>
-          <li>The outcome reaches the monitor as an ordinary message.</li>
-          <li>Every probe is recorded, whatever it said.</li>
-          <li>Three failures open an incident; two successes resolve it.</li>
-          <li>A change — and only a change — is broadcast to every open dashboard.</li>
-        </ol>
+        <.check_steps class="mt-2" />
       </details>
+
+      <.check_steps class="mt-4 sm:hidden" />
     </figure>
+
+    <ul class="mt-6 grid gap-4 md:grid-cols-3">
+      <li
+        :for={decision <- decisions()}
+        class="rounded-box border border-base-300 bg-base-100 p-5"
+      >
+        <h4 class="font-medium">{decision.title}</h4>
+        <p class="mt-1 text-sm text-base-content/60">{decision.body}</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="mb-6 rounded-box bg-primary px-6 py-10 text-center text-primary-content sm:py-14">
+    <h2 class="text-3xl font-semibold tracking-tight">Start watching your first service</h2>
+    <p class="mx-auto mt-3 max-w-xl opacity-80">
+      Register with an email, add a URL, press "Test connection". The first check runs straight
+      away.
+    </p>
+    <div class="mt-7 flex flex-wrap justify-center gap-3">
+      <.button
+        navigate={~p"/users/register"}
+        class="border-0 bg-base-100 text-base-content hover:bg-base-200"
+      >
+        Start monitoring <.icon name="lucide-arrow-right" class="size-4" />
+      </.button>
+      <a
+        href={github_url()}
+        rel="noopener"
+        class="btn btn-ghost text-primary-content hover:bg-primary-content/10"
+      >
+        <.icon name="lucide-code" class="size-4" /> View the source
+      </a>
+    </div>
   </section>
 </Layouts.public>

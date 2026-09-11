@@ -103,6 +103,15 @@
   --noise: 0;
 }
 
+/* The two shades of the status palette daisyUI has no role for: "unknown" (also
+   low severity) and high severity, which sits between warning and error. The
+   rest of the palette is success / warning / error above, so every status colour
+   is written down once, here, and components refer to it by name. */
+:root {
+  --color-status-unknown: #898781;
+  --color-severity-high: #ec835a;
+}
+
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);

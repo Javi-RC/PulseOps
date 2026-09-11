@@ -28,6 +28,10 @@ defmodule PulseOpsWeb.Layouts do
   attr :organizations, :list, default: [], doc: "organizations the user belongs to"
   attr :current_path, :string, default: nil, doc: "used to mark the active nav item"
 
+  attr :open_incident_count, :integer,
+    default: 0,
+    doc: "unresolved incidents, shown beside Incidents so trouble is visible from anywhere"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -62,16 +66,30 @@ defmodule PulseOpsWeb.Layouts do
             <.org_switcher current_scope={@current_scope} organizations={@organizations} />
           </div>
 
-          <nav :if={organization_scope?(@current_scope)} class="mt-4 flex-1 overflow-y-auto px-3">
-            <ul class="space-y-0.5">
-              <.nav_item
-                :for={item <- nav_items(@current_scope)}
-                label={item.label}
-                icon={item.icon}
-                href={item.href}
-                active={active?(@current_path, item.href, item.match)}
-              />
-            </ul>
+          <nav
+            :if={organization_scope?(@current_scope)}
+            class="mt-4 flex-1 space-y-4 overflow-y-auto px-3"
+            aria-label="Sections"
+          >
+            <div :for={section <- nav_sections(@current_scope)}>
+              <p
+                :if={section.title}
+                id={"nav-#{section.id}"}
+                class="px-2.5 pb-1 text-xs font-semibold uppercase tracking-wide text-base-content/40"
+              >
+                {section.title}
+              </p>
+              <ul class="space-y-0.5" aria-labelledby={section.title && "nav-#{section.id}"}>
+                <.nav_item
+                  :for={item <- section.items}
+                  label={item.label}
+                  icon={item.icon}
+                  href={item.href}
+                  active={active?(@current_path, item.href, item.match)}
+                  count={if item.label == "Incidents", do: @open_incident_count, else: 0}
+                />
+              </ul>
+            </div>
           </nav>
 
           <div class="mt-auto space-y-3 border-t border-base-300 p-3">
@@ -108,12 +126,12 @@ defmodule PulseOpsWeb.Layouts do
           <div class="flex items-center gap-2">
             <div class="w-28"><.theme_toggle /></div>
             <%= if @current_scope && @current_scope.user do %>
-              <.link navigate={~p"/"} class="btn btn-primary btn-sm">Dashboard</.link>
+              <.button navigate={~p"/"} variant="primary" size="sm">Dashboard</.button>
             <% else %>
-              <.link navigate={~p"/users/log-in"} class="btn btn-ghost btn-sm">Log in</.link>
-              <.link navigate={~p"/users/register"} class="btn btn-primary btn-sm">
+              <.button navigate={~p"/users/log-in"} variant="ghost" size="sm">Log in</.button>
+              <.button navigate={~p"/users/register"} variant="primary" size="sm">
                 Get started
-              </.link>
+              </.button>
             <% end %>
           </div>
         </div>
@@ -253,6 +271,7 @@ defmodule PulseOpsWeb.Layouts do
   attr :icon, :string, required: true
   attr :href, :string, required: true
   attr :active, :boolean, default: false
+  attr :count, :integer, default: 0, doc: "something waiting in this section; hidden at zero"
 
   def nav_item(assigns) do
     ~H"""
@@ -268,6 +287,15 @@ defmodule PulseOpsWeb.Layouts do
       >
         <.icon name={@icon} class="size-4 shrink-0" />
         {@label}
+        <%!-- A count, not a colour: the number says how many, and the screen
+              reader hears "2 open" rather than a bare figure. --%>
+        <span
+          :if={@count > 0}
+          id={"nav-count-#{String.downcase(@label)}"}
+          class="ml-auto min-w-5 rounded-full bg-error/15 px-1.5 text-center text-xs font-semibold tabular-nums text-error"
+        >
+          {@count}<span class="sr-only"> open</span>
+        </span>
       </.link>
     </li>
     """
@@ -366,49 +394,86 @@ defmodule PulseOpsWeb.Layouts do
   # last component definition: `attr` and `slot` attach to the next function
   # defined, so a helper in between silently steals them.
 
-  defp nav_items(scope) do
+  # Grouped by how often each thing is reached for: watching and responding every
+  # day, the operational settings that shape the paging, then the organization
+  # itself. Alert rules sit with maintenance rather than under Settings, because
+  # both decide when somebody gets woken up.
+  defp nav_sections(scope) do
     slug = scope.organization.slug
 
-    base = [
+    [
       %{
-        label: "Dashboard",
-        icon: "lucide-layout-dashboard",
-        href: ~p"/orgs/#{slug}",
-        match: :exact
-      },
-      %{
-        label: "Services",
-        icon: "lucide-server",
-        href: ~p"/orgs/#{slug}/services",
-        match: :prefix
-      },
-      %{
-        label: "Incidents",
-        icon: "lucide-siren",
-        href: ~p"/orgs/#{slug}/incidents",
-        match: :prefix
-      },
-      %{
-        label: "Maintenance",
-        icon: "lucide-calendar-clock",
-        href: ~p"/orgs/#{slug}/maintenance",
-        match: :prefix
-      },
-      %{label: "Members", icon: "lucide-users", href: ~p"/orgs/#{slug}/members", match: :prefix}
-    ]
-
-    if Organizations.can?(scope, :manage_organization) do
-      base ++
-        [
+        id: "monitoring",
+        title: nil,
+        items: [
           %{
-            label: "Settings",
-            icon: "lucide-settings",
-            href: ~p"/orgs/#{slug}/settings",
+            label: "Dashboard",
+            icon: "lucide-layout-dashboard",
+            href: ~p"/orgs/#{slug}",
+            match: :exact
+          },
+          %{
+            label: "Services",
+            icon: "lucide-server",
+            href: ~p"/orgs/#{slug}/services",
+            match: :prefix
+          },
+          %{
+            label: "Incidents",
+            icon: "lucide-siren",
+            href: ~p"/orgs/#{slug}/incidents",
             match: :prefix
           }
         ]
+      },
+      %{
+        id: "operations",
+        title: "Operations",
+        items: [
+          %{
+            label: "Maintenance",
+            icon: "lucide-calendar-clock",
+            href: ~p"/orgs/#{slug}/maintenance",
+            match: :prefix
+          },
+          %{
+            label: "Alert rules",
+            icon: "lucide-sliders-horizontal",
+            href: ~p"/orgs/#{slug}/settings/alert-rules",
+            match: :prefix
+          }
+        ]
+      },
+      %{
+        id: "organization",
+        title: "Organization",
+        items: organization_items(scope, slug)
+      }
+    ]
+  end
+
+  defp organization_items(scope, slug) do
+    members = %{
+      label: "Members",
+      icon: "lucide-users",
+      href: ~p"/orgs/#{slug}/members",
+      match: :prefix
+    }
+
+    if Organizations.can?(scope, :manage_organization) do
+      [
+        members,
+        %{
+          label: "Settings",
+          icon: "lucide-settings",
+          href: ~p"/orgs/#{slug}/settings",
+          # Alert rules live under the settings path but have their own entry;
+          # Settings lighting up beside it would mark two places at once.
+          match: {:prefix, except: ~p"/orgs/#{slug}/settings/alert-rules"}
+        }
+      ]
     else
-      base
+      [members]
     end
   end
 
@@ -417,6 +482,9 @@ defmodule PulseOpsWeb.Layouts do
   defp active?(nil, _href, _match), do: false
   defp active?(current, href, :exact), do: current == href
   defp active?(current, href, :prefix), do: String.starts_with?(current, href)
+
+  defp active?(current, href, {:prefix, except: excluded}),
+    do: active?(current, href, :prefix) and not String.starts_with?(current, excluded)
 
   defp organization_scope?(%{organization: %{slug: slug}}) when is_binary(slug), do: true
   defp organization_scope?(_scope), do: false

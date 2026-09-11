@@ -89,6 +89,27 @@ defmodule PulseOpsWeb.IncidentLiveTest do
       assert Incidents.get_incident!(scope, incident.id).status == :investigating
     end
 
+    test "marks where the incident stands instead of disabling a button", %{
+      conn: conn,
+      scope: scope,
+      service: service
+    } do
+      incident = incident_fixture(service)
+
+      {:ok, live, _html} =
+        live(conn, ~p"/orgs/#{scope.organization.slug}/incidents/#{incident}")
+
+      assert has_element?(live, ~s(#incident-status [aria-current="step"]), "Open")
+      refute has_element?(live, "#incident-status button[phx-value-status=open]")
+      refute has_element?(live, "#incident-status button[disabled]")
+
+      live |> element("button[phx-value-status=investigating]") |> render_click()
+
+      assert has_element?(live, ~s(#incident-status [aria-current="step"]), "Investigating")
+      # Open is behind it now, and can still be gone back to.
+      assert has_element?(live, "#incident-status button[phx-value-status=open]")
+    end
+
     test "records the root cause", %{conn: conn, scope: scope, service: service} do
       incident = incident_fixture(service)
 
