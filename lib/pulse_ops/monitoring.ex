@@ -547,7 +547,7 @@ defmodule PulseOps.Monitoring do
   def monitor_state(%Service{id: id}) do
     cond do
       not MonitorSupervisor.enabled?() -> :not_applicable
-      ServiceMonitor.whereis(id) -> :running
+      MonitorSupervisor.watching?(id) -> :running
       true -> :stopped
     end
   end

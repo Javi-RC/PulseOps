@@ -1,13 +1,19 @@
 defmodule PulseOps.Monitoring.MonitorSupervisor do
   @moduledoc """
-  Owns the per-service monitor processes.
+  Owns one `MonitorContainer` per watched service.
 
-  Monitors are `:transient`, so one that keeps crashing is restarted a bounded
-  number of times and then given up on, without disturbing any other monitor.
+  It does not supervise monitors directly any more, and that is the point. Its
+  restart intensity used to be the only restart budget there was, shared by every
+  monitor, so one service crashing six times in a minute took every other
+  service's monitor down with it (F10). Each container now carries its own budget
+  for its own monitor, and containers are temporary: a container that gives up
+  exits and is not restarted, so nothing a single service does is ever counted
+  against this supervisor.
   """
 
   use DynamicSupervisor
 
+  alias PulseOps.Monitoring.MonitorContainer
   alias PulseOps.Monitoring.Service
   alias PulseOps.Monitoring.ServiceMonitor
 
@@ -17,37 +23,34 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
 
   @impl true
   def init(_init_arg) do
-    DynamicSupervisor.init(
-      strategy: :one_for_one,
-      # A monitor whose service is unreachable in a way that crashes it should be
-      # abandoned rather than restarted for ever.
-      max_restarts: 5,
-      max_seconds: 60
-    )
+    # No max_restarts here on purpose. The children are temporary and are never
+    # restarted, so this supervisor's intensity has nothing to count; the budget
+    # that decides when to give up on a monitor lives in its container.
+    DynamicSupervisor.init(strategy: :one_for_one)
   end
 
   @doc """
-  Starts a monitor for the service, unless one is already running or monitors
-  are disabled for this environment.
+  Starts watching a service, unless it is already watched or monitors are
+  disabled for this environment.
   """
   def start_monitor(%Service{} = service) do
     cond do
       not enabled?() -> {:ok, :disabled}
       not service.enabled -> {:ok, :disabled}
-      true -> DynamicSupervisor.start_child(__MODULE__, {ServiceMonitor, service})
+      true -> DynamicSupervisor.start_child(__MODULE__, {MonitorContainer, service})
     end
   end
 
   @doc """
-  Stops the monitor for a service, if there is one.
+  Stops watching a service, if it is watched.
 
-  Returns once the registry has released the name. `terminate_child/2` waits for
-  the process to exit, but the registry only drops its entry when it processes
-  the resulting `:DOWN`, so returning any earlier would let a following
+  Returns once the registry has released both names. `terminate_child/2` waits
+  for the container to exit, but the registry drops each entry only when it
+  processes the resulting `:DOWN`, so returning any earlier would let a following
   `start_monitor/1` collide with the name of a process that is already dead.
   """
   def stop_monitor(service_id) do
-    case ServiceMonitor.whereis(service_id) do
+    case MonitorContainer.whereis(service_id) do
       nil ->
         :ok
 
@@ -56,15 +59,21 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
         result = DynamicSupervisor.terminate_child(__MODULE__, pid)
         await_down(pid, ref)
         await_unregistered(service_id)
-        result
+        normalize(result)
     end
   end
+
+  # A container can exit on its own between being looked up and being
+  # terminated — it gave up on its monitor, or the monitor stopped because its
+  # service was deleted. Either way the service is no longer watched, which is
+  # what the caller asked for.
+  defp normalize({:error, :not_found}), do: :ok
+  defp normalize(result), do: result
 
   @down_timeout_ms 5_000
   @unregister_attempts 100
 
-  # The process dying is an event, so wait for the event. This used to be part
-  # of a loop that slept in 10 ms steps for up to half a second.
+  # The process dying is an event, so wait for the event.
   defp await_down(pid, ref) do
     receive do
       {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
@@ -73,32 +82,28 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
     end
   end
 
-  # The registry's cleanup is not our event to wait for: it drops its entry when
+  # The registry's cleanup is not our event to wait for: it drops an entry when
   # *it* handles the `:DOWN`, in its own process, and there is no message to
-  # subscribe to for that. So this half stays a bounded poll — but only this
-  # half, and it almost always reads the table once and returns, because
-  # `await_down/2` has already waited out the part that actually takes time.
+  # subscribe to for that. So this half stays a bounded poll — it almost always
+  # reads the table once and returns, because `await_down/2` has already waited
+  # out the part that takes time.
   #
   # `Process.sleep(0)` was tried here and is not enough: yielding the scheduler
-  # slice does not guarantee the registry has run, and 20 yields would sometimes
-  # elapse with the name still held — which then failed the next
-  # `start_monitor/1` with `{:already_started, <dead pid>}`.
+  # slice does not guarantee the registry has run.
   defp await_unregistered(service_id, attempts \\ @unregister_attempts)
   defp await_unregistered(_service_id, 0), do: :ok
 
   defp await_unregistered(service_id, attempts) do
-    case ServiceMonitor.whereis(service_id) do
-      nil ->
-        :ok
-
-      _pid ->
-        Process.sleep(1)
-        await_unregistered(service_id, attempts - 1)
+    if ServiceMonitor.whereis(service_id) || MonitorContainer.whereis(service_id) do
+      Process.sleep(1)
+      await_unregistered(service_id, attempts - 1)
+    else
+      :ok
     end
   end
 
   @doc """
-  Restarts a monitor so it picks up a changed url, interval or timeout.
+  Restarts watching a service so it picks up a changed url, interval or timeout.
   """
   def restart_monitor(%Service{} = service) do
     stop_monitor(service.id)
@@ -106,7 +111,17 @@ defmodule PulseOps.Monitoring.MonitorSupervisor do
   end
 
   @doc """
-  How many monitors are currently running.
+  Whether a service is being watched.
+
+  Asks about the container rather than the monitor. A monitor that has just
+  crashed is briefly not registered while its container restarts it, and that
+  service is still being watched; it stops being watched only when the container
+  gives up and exits.
+  """
+  def watching?(service_id), do: MonitorContainer.whereis(service_id) != nil
+
+  @doc """
+  How many services are currently being watched.
   """
   def count_monitors do
     %{active: active} = DynamicSupervisor.count_children(__MODULE__)
