@@ -32,6 +32,15 @@ defmodule PulseOpsWeb.MaintenanceLiveTest do
     assert html =~ "Nothing scheduled"
   end
 
+  test "tells a viewer that incidents still open without a window",
+       %{conn: conn, scope: scope, user: user} do
+    demote(scope, user, :viewer)
+
+    {:ok, live, _html} = live(conn, path(scope))
+
+    assert has_element?(live, "#maintenance-empty", "Incidents open and notify as usual")
+  end
+
   test "schedules a window and shows it as running", %{conn: conn, scope: scope} do
     {:ok, live, _html} = live(conn, path(scope))
 

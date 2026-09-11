@@ -115,19 +115,21 @@ defmodule PulseOpsWeb.ServiceLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="Services">
         <:subtitle>
           {length(@services)} monitored in {@current_scope.organization.name}.
         </:subtitle>
         <:actions>
-          <.link
+          <.button
             :if={@can_manage?}
             navigate={~p"/orgs/#{@current_scope.organization.slug}/services/new"}
-            class="btn btn-primary btn-sm"
+            variant="primary"
+            size="sm"
           >
             <.icon name="lucide-plus" class="size-4" /> New service
-          </.link>
+          </.button>
         </:actions>
       </.page_header>
 
@@ -174,13 +176,14 @@ defmodule PulseOpsWeb.ServiceLive.Index do
           Register an endpoint and PulseOps starts watching it from its own supervised process.
         </:subtitle>
         <:actions>
-          <.link
+          <.button
             :if={@can_manage?}
             navigate={~p"/orgs/#{@current_scope.organization.slug}/services/new"}
-            class="btn btn-primary btn-sm"
+            variant="primary"
+            size="sm"
           >
             Add the first one
-          </.link>
+          </.button>
         </:actions>
       </.empty_state>
 
@@ -194,12 +197,14 @@ defmodule PulseOpsWeb.ServiceLive.Index do
 
       <.card :if={@visible_services != []} padded={false} class="overflow-hidden">
         <ul class="divide-y divide-base-300">
+          <%!-- On a phone the status and uptime fold under the name, instead of
+                wrapping onto a ragged second row of their own. --%>
           <li
             :for={service <- @visible_services}
             id={"service-#{service.id}"}
-            class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 hover:bg-base-200/50"
+            class="flex items-start gap-3 px-4 py-3 hover:bg-base-200/50 sm:items-center sm:gap-4"
           >
-            <.status_badge status={service.status} class="w-28 shrink-0" />
+            <.status_badge status={service.status} class="w-28 shrink-0 max-sm:hidden" />
 
             <div class="min-w-0 flex-1">
               <.link
@@ -211,14 +216,20 @@ defmodule PulseOpsWeb.ServiceLive.Index do
               <div class="truncate text-xs text-base-content/50">
                 {service.environment} · every {seconds(service.check_interval_ms)} · {service.url}
               </div>
+              <div class="mt-1 flex items-center gap-2 text-xs sm:hidden">
+                <.status_badge status={service.status} />
+                <span class="tabular-nums text-base-content/60">
+                  {format_percent(@uptime[service.id])} · 24h
+                </span>
+              </div>
             </div>
 
-            <div class="w-20 shrink-0 text-right">
+            <div class="w-20 shrink-0 text-right max-sm:hidden">
               <div class="text-sm tabular-nums">{format_percent(@uptime[service.id])}</div>
               <div class="text-xs text-base-content/40">24h</div>
             </div>
 
-            <div class="hidden w-28 shrink-0 text-right text-xs text-base-content/50 sm:block">
+            <div class="hidden w-28 shrink-0 text-right text-xs text-base-content/50 md:block">
               <.relative_time now={@now} at={service.last_checked_at} />
             </div>
 
@@ -229,22 +240,25 @@ defmodule PulseOpsWeb.ServiceLive.Index do
               >
                 Paused
               </span>
-              <.link
+              <.button
                 navigate={~p"/orgs/#{@current_scope.organization.slug}/services/#{service}/edit"}
-                class="btn btn-ghost btn-xs"
+                variant="ghost"
+                size="xs"
                 aria-label={"Edit #{service.name}"}
               >
                 <.icon name="lucide-pencil" class="size-4" />
-              </.link>
-              <button
+              </.button>
+              <.button
                 phx-click="delete"
                 phx-value-id={service.id}
                 data-confirm={"Delete #{service.name}? Its checks and incidents go with it."}
-                class="btn btn-ghost btn-xs text-error"
+                data-confirm-label="Delete service"
+                variant="danger-ghost"
+                size="xs"
                 aria-label={"Delete #{service.name}"}
               >
                 <.icon name="lucide-trash" class="size-4" />
-              </button>
+              </.button>
             </div>
           </li>
         </ul>

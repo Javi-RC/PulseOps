@@ -88,26 +88,47 @@ defmodule PulseOpsWeb.CoreComponents do
   end
 
   @doc """
-  Renders a button with navigation support.
+  Renders a button, or a link that looks like one.
+
+  Every button in the application comes through here, so a variant means the same
+  thing on every screen:
+
+    * `primary` — the one action a view exists for.
+    * `secondary` — any other action. The default.
+    * `ghost` — a quiet action inside a list or a toolbar.
+    * `outline` — a choice on offer but not taken, such as a step not yet reached.
+    * `danger` — the final yes to something destructive.
+    * `danger-ghost` — a destructive action offered inside a list; it asks first.
+
+  `class` adds to the button's own classes rather than replacing them, so layout
+  such as `w-full` never costs the button its look.
 
   ## Examples
 
-      <.button>Send!</.button>
+      <.button>Cancel</.button>
       <.button phx-click="go" variant="primary">Send!</.button>
-      <.button navigate={~p"/"}>Home</.button>
+      <.button navigate={~p"/"} size="sm">Home</.button>
   """
-  attr :rest, :global, include: ~w(href navigate patch method download name value disabled)
-  attr :class, :any
-  attr :variant, :string, values: ~w(primary)
+  attr :rest, :global,
+    include: ~w(href navigate patch method download name value disabled type form rel)
+
+  attr :class, :string, default: nil
+
+  attr :variant, :string,
+    values: ~w(primary secondary ghost outline danger danger-ghost),
+    default: "secondary"
+
+  attr :size, :string, values: ~w(xs sm md), default: "md"
   slot :inner_block, required: true
 
   def button(%{rest: rest} = assigns) do
-    variants = %{"primary" => "btn-primary", nil => "btn-primary btn-soft"}
-
     assigns =
-      assign_new(assigns, :class, fn ->
-        ["btn", Map.fetch!(variants, assigns[:variant])]
-      end)
+      assign(assigns, :class, [
+        "btn",
+        button_variant(assigns.variant),
+        button_size(assigns.size),
+        assigns.class
+      ])
 
     if rest[:href] || rest[:navigate] || rest[:patch] do
       ~H"""
@@ -123,6 +144,17 @@ defmodule PulseOpsWeb.CoreComponents do
       """
     end
   end
+
+  defp button_variant("primary"), do: "btn-primary"
+  defp button_variant("secondary"), do: "btn-soft"
+  defp button_variant("ghost"), do: "btn-ghost"
+  defp button_variant("outline"), do: "btn-outline"
+  defp button_variant("danger"), do: "btn-error"
+  defp button_variant("danger-ghost"), do: "btn-ghost text-error"
+
+  defp button_size("xs"), do: "btn-xs"
+  defp button_size("sm"), do: "btn-sm"
+  defp button_size("md"), do: nil
 
   @doc """
   Renders an input with label and error messages.
@@ -190,11 +222,9 @@ defmodule PulseOpsWeb.CoreComponents do
                 multiple pattern placeholder readonly required rows size step)
 
   def input(%{field: %Phoenix.HTML.FormField{} = field} = assigns) do
-    errors = if Phoenix.Component.used_input?(field), do: field.errors, else: []
-
     assigns
     |> assign(field: nil, id: assigns.id || field.id)
-    |> assign(:errors, Enum.map(errors, &translate_error(&1)))
+    |> assign(:errors, field_errors(field))
     |> assign_new(:name, fn -> if assigns.multiple, do: field.name <> "[]", else: field.name end)
     |> assign_new(:value, fn -> field.value end)
     |> input()
@@ -310,6 +340,34 @@ defmodule PulseOpsWeb.CoreComponents do
       <.icon name="hero-exclamation-circle" class="size-5" />
       {render_slot(@inner_block)}
     </p>
+    """
+  end
+
+  @doc """
+  A form field's errors, translated — and only once the user has touched the
+  field, so a blank form does not open covered in complaints.
+  """
+  def field_errors(%Phoenix.HTML.FormField{} = field) do
+    if Phoenix.Component.used_input?(field),
+      do: Enum.map(field.errors, &translate_error/1),
+      else: []
+  end
+
+  @doc """
+  A field's errors, drawn exactly as `input/1` draws them.
+
+  For a control built by hand that still belongs to a form field — a number with
+  a unit beside it, say — so its errors look like every other field's.
+
+  ## Examples
+
+      <.field_error field={@form[:timeout_ms]} />
+  """
+  attr :field, Phoenix.HTML.FormField, required: true
+
+  def field_error(assigns) do
+    ~H"""
+    <.error :for={msg <- field_errors(@field)}>{msg}</.error>
     """
   end
 

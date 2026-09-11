@@ -69,7 +69,7 @@ defmodule PulseOpsWeb.InvitationLive do
             </:subtitle>
           </.header>
 
-          <.link navigate={~p"/"} class="btn btn-soft mt-6">Back to PulseOps</.link>
+          <.button navigate={~p"/"} class="mt-6">Back to PulseOps</.button>
         </div>
       </div>
     </Layouts.public>

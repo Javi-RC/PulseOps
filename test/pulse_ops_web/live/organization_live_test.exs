@@ -134,10 +134,46 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
       assert Repo.reload!(scope.organization).name == "Renamed"
     end
 
-    test "warns that changing the URL breaks existing links", %{conn: conn, scope: scope} do
-      {:ok, _live, html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
+    test "warns that changing the address breaks existing links, once it is being changed", %{
+      conn: conn,
+      scope: scope
+    } do
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/settings")
 
-      assert html =~ "Existing links and"
+      # Nothing is changing yet, so there is nothing to warn about.
+      refute has_element?(live, "#slug-warning")
+
+      live
+      |> form("#organization-form",
+        organization: %{name: scope.organization.name, slug: "somewhere-else"}
+      )
+      |> render_change()
+
+      assert has_element?(live, "#slug-warning", "Existing links and bookmarks will stop working")
+      assert has_element?(live, "#organization-form code", "/orgs/somewhere-else")
+    end
+
+    test "lays the page out as sections, with integrations a click away", %{
+      conn: conn,
+      scope: scope
+    } do
+      slug = scope.organization.slug
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{slug}/settings")
+
+      assert has_element?(live, "#settings-general h2", "General")
+      assert has_element?(live, "#settings-status-page", "Not published")
+
+      assert has_element?(
+               live,
+               ~s(#integration-links a[href="/orgs/#{slug}/settings/notifiers"]),
+               "Notifiers"
+             )
+
+      assert has_element?(
+               live,
+               ~s(#integration-links a[href="/orgs/#{slug}/settings/api-tokens"]),
+               "API tokens"
+             )
     end
 
     test "is not reachable by somebody who cannot manage the organization", %{
@@ -186,6 +222,48 @@ defmodule PulseOpsWeb.OrganizationLiveTest do
       assert html =~ "What each role can do"
       assert html =~ "Manage services"
       assert html =~ "Respond to incidents"
+    end
+
+    test "says before sending whether an address will be added or invited", %{
+      conn: conn,
+      scope: scope
+    } do
+      colleague = user_fixture()
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/members")
+
+      live
+      |> form("#add-member-form", member: %{email: colleague.email, role: "member"})
+      |> render_change()
+
+      assert has_element?(live, "#recipient-hint", "added straight away")
+      assert has_element?(live, "#add-member-button", "Add member")
+
+      live
+      |> form("#add-member-form", member: %{email: "nobody@example.com", role: "member"})
+      |> render_change()
+
+      assert has_element?(live, "#recipient-hint", "emailed an invitation")
+      assert has_element?(live, "#add-member-button", "Send invitation")
+
+      live
+      |> form("#add-member-form", member: %{email: scope.user.email, role: "member"})
+      |> render_change()
+
+      assert has_element?(live, "#recipient-hint", "Already a member")
+      assert has_element?(live, "#add-member-button[disabled]")
+    end
+
+    test "says why a locked row cannot be changed", %{conn: conn, scope: scope, user: user} do
+      membership = Organizations.get_membership(scope.organization, user)
+
+      {:ok, live, _html} = live(conn, ~p"/orgs/#{scope.organization.slug}/members")
+
+      assert has_element?(
+               live,
+               ~s(#member-#{membership.id} select[disabled][aria-describedby="member-#{membership.id}-locked"])
+             )
+
+      assert has_element?(live, "#member-#{membership.id}-locked", "cannot change your own role")
     end
 
     test "adds an existing account", %{conn: conn, scope: scope} do

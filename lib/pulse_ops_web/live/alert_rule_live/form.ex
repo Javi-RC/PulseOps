@@ -174,6 +174,7 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title={@page_title}>
         <:subtitle>
@@ -186,9 +187,9 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
         <.empty_state icon="lucide-sliders-horizontal" title="Nothing left to configure">
           <:subtitle>Every service already has its own rule.</:subtitle>
           <:actions>
-            <.link navigate={alert_rules_path(@current_scope)} class="btn btn-soft btn-sm">
+            <.button navigate={alert_rules_path(@current_scope)} size="sm">
               Back to alert rules
-            </.link>
+            </.button>
           </:actions>
         </.empty_state>
       <% else %>
@@ -196,9 +197,7 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
           <div class="grid gap-4 lg:grid-cols-3">
             <div class="space-y-4 lg:col-span-2">
               <.card>
-                <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                  Applies to
-                </h2>
+                <.section_heading title="Applies to" />
 
                 <%= if @live_action == :new do %>
                   <.input
@@ -224,9 +223,7 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
               </.card>
 
               <.card>
-                <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                  When it fails
-                </h2>
+                <.section_heading title="When it fails" />
 
                 <div class="grid gap-3 sm:grid-cols-2">
                   <div>
@@ -273,9 +270,7 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
                     />
                     <span class="text-sm text-base-content/50">% of the timeout</span>
                   </label>
-                  <p :for={msg <- errors_for(@form, :degraded_ratio)} class="mt-1 text-sm text-error">
-                    {msg}
-                  </p>
+                  <.field_error field={@form[:degraded_ratio]} />
                   <p class="mt-1 text-xs text-base-content/50">
                     A check that answers at or above this share of the timeout is recorded as
                     degraded instead of healthy.
@@ -286,9 +281,7 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
 
             <div class="space-y-4">
               <.card>
-                <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                  Severity
-                </h2>
+                <.section_heading title="Severity" />
 
                 <.input
                   field={@form[:severity]}
@@ -308,9 +301,9 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
                 <.button id="save-rule-button" variant="primary" phx-disable-with="Saving...">
                   Save rule
                 </.button>
-                <.link navigate={alert_rules_path(@current_scope)} class="btn btn-soft">
+                <.button navigate={alert_rules_path(@current_scope)}>
                   Cancel
-                </.link>
+                </.button>
               </div>
             </div>
           </div>
@@ -318,11 +311,5 @@ defmodule PulseOpsWeb.AlertRuleLive.Form do
       <% end %>
     </Layouts.app>
     """
-  end
-
-  defp errors_for(form, field) do
-    form[field]
-    |> then(&if(Phoenix.Component.used_input?(&1), do: &1.errors, else: []))
-    |> Enum.map(&PulseOpsWeb.CoreComponents.translate_error/1)
   end
 end

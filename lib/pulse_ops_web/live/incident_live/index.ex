@@ -12,6 +12,7 @@ defmodule PulseOpsWeb.IncidentLive.Index do
   use PulseOpsWeb, :live_view
 
   import PulseOpsWeb.MonitoringComponents
+  import PulseOpsWeb.UIComponents
 
   alias PulseOps.Incidents
   alias PulseOps.Incidents.Incident
@@ -72,6 +73,11 @@ defmodule PulseOpsWeb.IncidentLive.Index do
     ~p"/orgs/#{scope.organization.slug}/incidents?#{[filter: filter, page: page]}"
   end
 
+  # Where an open incident stands, or that it is over.
+  defp incident_phase(incident) do
+    if Incident.open?(incident), do: incident_status_label(incident.status), else: "Resolved"
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -80,17 +86,25 @@ defmodule PulseOpsWeb.IncidentLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
-      <.header>
-        Incidents
+      <.page_header title="Incidents">
         <:subtitle>Opened and resolved automatically by the monitors.</:subtitle>
-      </.header>
+      </.page_header>
 
-      <nav id="incident-filters" class="mt-6 flex gap-2" aria-label="Filter incidents">
+      <nav
+        id="incident-filters"
+        class="mt-6 inline-flex items-center gap-1 rounded-box border border-base-300 bg-base-200/50 p-1"
+        aria-label="Filter incidents"
+      >
         <.link
           :for={filter <- @filters}
           patch={incidents_path(@current_scope, filter, 1)}
-          class={["btn btn-sm", filter == @filter && "btn-active"]}
+          class={[
+            "rounded-sm px-3 py-1.5 text-sm font-medium transition-all",
+            filter == @filter && "bg-base-100 shadow-sm text-base-content",
+            filter != @filter && "text-base-content/60 hover:text-base-content/80"
+          ]}
           aria-current={filter == @filter && "true"}
         >
           {String.capitalize(filter)}
@@ -119,7 +133,12 @@ defmodule PulseOpsWeb.IncidentLive.Index do
         id="incidents"
         class="mt-6 divide-y divide-base-300 rounded-lg border border-base-300"
       >
-        <li :for={incident <- @incidents} class="flex flex-wrap items-center gap-4 px-4 py-3">
+        <%!-- On a phone the duration and status fold under the title instead of
+              wrapping onto a ragged second row of their own. --%>
+        <li
+          :for={incident <- @incidents}
+          class="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/50 sm:items-center sm:gap-4"
+        >
           <.severity_tag severity={incident.severity} />
 
           <div class="min-w-0 flex-1">
@@ -132,15 +151,19 @@ defmodule PulseOpsWeb.IncidentLive.Index do
             <div class="text-xs text-base-content/50">
               {incident.service.name} · started <.relative_time at={incident.started_at} />
             </div>
+            <div class="mt-1 text-xs text-base-content/60 sm:hidden">
+              <span class="tabular-nums">{format_duration(Incident.duration_seconds(incident))}</span>
+              · {incident_phase(incident)}
+            </div>
           </div>
 
-          <div class="text-sm tabular-nums text-base-content/60">
+          <div class="text-sm tabular-nums text-base-content/60 max-sm:hidden">
             {format_duration(Incident.duration_seconds(incident))}
           </div>
 
-          <div class="w-28 text-sm">
+          <div class="w-28 text-sm max-sm:hidden">
             <span :if={Incident.open?(incident)} class="font-medium">
-              {incident_status_label(incident.status)}
+              {incident_phase(incident)}
             </span>
             <span :if={not Incident.open?(incident)} class="text-base-content/50">Resolved</span>
           </div>
@@ -153,26 +176,26 @@ defmodule PulseOpsWeb.IncidentLive.Index do
         class="mt-4 flex items-center justify-between"
         aria-label="Pagination"
       >
-        <.link
+        <.button
           :if={@page > 1}
           patch={incidents_path(@current_scope, @filter, @page - 1)}
-          class="btn btn-sm"
+          size="sm"
           rel="prev"
         >
           &larr; Newer
-        </.link>
+        </.button>
         <span :if={@page == 1}></span>
 
         <span class="text-sm text-base-content/60">Page {@page}</span>
 
-        <.link
+        <.button
           :if={@has_more?}
           patch={incidents_path(@current_scope, @filter, @page + 1)}
-          class="btn btn-sm"
+          size="sm"
           rel="next"
         >
           Older &rarr;
-        </.link>
+        </.button>
         <span :if={not @has_more?}></span>
       </nav>
     </Layouts.app>

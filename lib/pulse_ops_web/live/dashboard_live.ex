@@ -133,6 +133,7 @@ defmodule PulseOpsWeb.DashboardLive do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title={@current_scope.organization.name}>
         <:subtitle>
@@ -155,34 +156,49 @@ defmodule PulseOpsWeb.DashboardLive do
       </div>
 
       <section class="mb-8">
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/60">
-            Services
-          </h2>
-          <.link
-            navigate={~p"/orgs/#{@current_scope.organization.slug}/services"}
-            class="text-sm text-base-content/60 hover:underline"
-          >
-            Manage
-          </.link>
-        </div>
+        <.section_heading title="Services">
+          <:actions>
+            <.link
+              navigate={~p"/orgs/#{@current_scope.organization.slug}/services"}
+              class="text-sm text-base-content/60 hover:underline"
+            >
+              Manage
+            </.link>
+            <%!-- With no services the empty state below already carries this action. --%>
+            <.button
+              :if={@can_manage? and @services != []}
+              id="new-service"
+              navigate={~p"/orgs/#{@current_scope.organization.slug}/services/new"}
+              variant="primary"
+              size="sm"
+            >
+              <.icon name="lucide-plus" class="size-4" /> New service
+            </.button>
+          </:actions>
+        </.section_heading>
 
         <.empty_state
           :if={@services == []}
+          id="dashboard-services-empty"
           icon="lucide-server"
           title="Nothing is being watched yet"
         >
           <:subtitle>
-            Register an endpoint and PulseOps starts probing it from its own supervised process.
+            <%= if @can_manage? do %>
+              Register an endpoint and PulseOps starts probing it from its own supervised process.
+            <% else %>
+              Once an owner or admin registers an endpoint, it shows up here with its live status.
+            <% end %>
           </:subtitle>
           <:actions>
-            <.link
+            <.button
               :if={@can_manage?}
               navigate={~p"/orgs/#{@current_scope.organization.slug}/services/new"}
-              class="btn btn-primary btn-sm"
+              variant="primary"
+              size="sm"
             >
               Add the first service
-            </.link>
+            </.button>
           </:actions>
         </.empty_state>
 
@@ -191,11 +207,11 @@ defmodule PulseOpsWeb.DashboardLive do
             :for={service <- @services}
             navigate={~p"/orgs/#{@current_scope.organization.slug}/services/#{service}"}
             id={"service-#{service.id}"}
-            class="rounded-box border border-base-300 bg-base-100 p-4 transition-shadow hover:shadow-md"
+            class="group rounded-box border border-base-300 bg-base-100 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/20 hover:shadow-md"
           >
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
-                <div class="truncate font-medium">{service.name}</div>
+                <div class="truncate font-medium group-hover:underline">{service.name}</div>
                 <div class="text-xs text-base-content/50">{service.environment}</div>
               </div>
               <.status_badge status={service.status} />
@@ -214,12 +230,11 @@ defmodule PulseOpsWeb.DashboardLive do
       </section>
 
       <section>
-        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-          Active incidents
-          <span :if={@incidents != []} class="ml-1 normal-case text-base-content/40">
-            ({length(@incidents)})
-          </span>
-        </h2>
+        <.section_heading title="Active incidents">
+          <:subtitle :if={@incidents != []}>
+            {length(@incidents)} open
+          </:subtitle>
+        </.section_heading>
 
         <.empty_state :if={@incidents == []} icon="lucide-circle-check" title="Nothing is on fire">
           <:subtitle>Incidents open automatically when a service stops answering.</:subtitle>

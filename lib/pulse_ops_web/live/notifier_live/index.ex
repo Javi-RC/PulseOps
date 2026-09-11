@@ -58,6 +58,7 @@ defmodule PulseOpsWeb.NotifierLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="Notifications">
         <:subtitle>
@@ -65,14 +66,15 @@ defmodule PulseOpsWeb.NotifierLive.Index do
           notifier is a webhook endpoint or an email address.
         </:subtitle>
         <:actions>
-          <.link
+          <.button
             :if={@can_manage?}
             id="new-notifier-link"
             navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/notifiers/new"}
-            class="btn btn-primary btn-sm"
+            variant="primary"
+            size="sm"
           >
             <.icon name="lucide-plus" class="size-4" /> New notifier
-          </.link>
+          </.button>
         </:actions>
       </.page_header>
 
@@ -83,13 +85,13 @@ defmodule PulseOpsWeb.NotifierLive.Index do
             hear about incidents as they happen.
           </:subtitle>
           <:actions>
-            <.link
+            <.button
               :if={@can_manage?}
               navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/notifiers/new"}
-              class="btn btn-soft btn-sm"
+              size="sm"
             >
               Add a notifier
-            </.link>
+            </.button>
           </:actions>
         </.empty_state>
       <% else %>
@@ -135,24 +137,27 @@ defmodule PulseOpsWeb.NotifierLive.Index do
             </div>
             <%= if @can_manage? do %>
               <div class="flex items-center gap-1">
-                <.link
+                <.button
                   navigate={
                     ~p"/orgs/#{@current_scope.organization.slug}/settings/notifiers/#{notifier.id}/edit"
                   }
-                  class="btn btn-ghost btn-sm"
+                  variant="ghost"
+                  size="sm"
                 >
                   Edit
-                </.link>
-                <button
+                </.button>
+                <.button
                   type="button"
                   phx-click="delete"
                   phx-value-id={notifier.id}
                   data-confirm={"Remove #{notifier.name}? Incidents will no longer be sent to it."}
-                  class="btn btn-ghost btn-sm text-error"
+                  data-confirm-label="Remove notifier"
+                  variant="danger-ghost"
+                  size="sm"
                   aria-label={"Delete notifier #{notifier.name}"}
                 >
                   <.icon name="lucide-trash" class="size-4" />
-                </button>
+                </.button>
               </div>
             <% end %>
           </div>

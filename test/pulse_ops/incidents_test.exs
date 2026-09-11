@@ -204,6 +204,24 @@ defmodule PulseOps.IncidentsTest do
       assert updated.cause == "Database connection pool exhausted"
     end
 
+    test "saving the cause without moving the status logs no status change", %{
+      scope: scope,
+      service: service
+    } do
+      incident = incident_fixture(service)
+      {:ok, investigating} = Incidents.update_incident(scope, incident, %{status: :investigating})
+
+      assert {:ok, _updated} =
+               Incidents.update_incident(scope, investigating, %{
+                 status: :investigating,
+                 cause: "Database connection pool exhausted"
+               })
+
+      %{events: events} = Incidents.get_incident!(scope, incident.id)
+      # One for the move to investigating; none for saving the cause.
+      assert Enum.count(events, &(&1.type == :status_changed)) == 1
+    end
+
     test "refuses to set resolved through the workflow", %{scope: scope, service: service} do
       incident = incident_fixture(service)
 

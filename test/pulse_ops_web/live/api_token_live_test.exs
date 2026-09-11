@@ -24,6 +24,14 @@ defmodule PulseOpsWeb.ApiTokenLiveTest do
     assert html =~ "No tokens yet"
   end
 
+  test "tells a viewer with no tokens who can make one", %{conn: conn, scope: scope, user: user} do
+    demote(scope, user, :viewer)
+
+    {:ok, live, _html} = live(conn, tokens_path(scope))
+
+    assert has_element?(live, "#api-tokens-empty", "An owner or admin")
+  end
+
   test "creating one shows it exactly once", %{conn: conn, scope: scope} do
     {:ok, live, _html} = live(conn, tokens_path(scope))
 

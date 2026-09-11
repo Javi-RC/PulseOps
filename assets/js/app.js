@@ -32,6 +32,76 @@ const liveSocket = new LiveSocket("/live", Socket, {
   hooks: {...colocatedHooks},
 })
 
+// A styled confirmation for `data-confirm`, in place of the browser's own dialog.
+//
+// phoenix_html answers `data-confirm` with window.confirm from a bubbling click
+// listener: a grey box that cannot be styled and cannot name what the button is
+// about to do. This listener runs first, in the capture phase on window, so it
+// holds the click back, asks with a <dialog>, and replays the click on a yes —
+// with the attribute lifted for that one replay so the stock confirm stays quiet.
+//
+// The message's opening question becomes the title ("Delete Payments API?") and
+// the rest the explanation. `data-confirm-label` names the button that agrees.
+const confirmDialog = document.createElement("dialog")
+confirmDialog.className = "modal"
+confirmDialog.innerHTML = `
+  <div class="modal-box max-w-md">
+    <h3 class="text-lg font-semibold" data-confirm-title></h3>
+    <p class="mt-2 text-sm text-base-content/70" data-confirm-message></p>
+    <form method="dialog" class="modal-action">
+      <button value="cancel" class="btn btn-soft">Go back</button>
+      <button value="confirm" class="btn btn-error" data-confirm-accept></button>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button value="cancel">Close</button></form>
+`
+document.body.appendChild(confirmDialog)
+
+let replayingConfirmedClick = false
+
+const askToConfirm = element => {
+  const message = element.getAttribute("data-confirm")
+  const [, title, body] = message.match(/^(.*?\?)\s*(.*)$/s) || [null, "Are you sure?", message]
+
+  confirmDialog.querySelector("[data-confirm-title]").textContent = title
+  const bodyElement = confirmDialog.querySelector("[data-confirm-message]")
+  bodyElement.textContent = body
+  bodyElement.hidden = body === ""
+  confirmDialog.querySelector("[data-confirm-accept]").textContent =
+    element.dataset.confirmLabel || "Confirm"
+
+  confirmDialog.onclose = () => {
+    if (confirmDialog.returnValue !== "confirm") {
+      element.focus()
+      return
+    }
+
+    element.removeAttribute("data-confirm")
+    replayingConfirmedClick = true
+    try {
+      element.click()
+    } finally {
+      replayingConfirmedClick = false
+      element.setAttribute("data-confirm", message)
+    }
+  }
+
+  confirmDialog.returnValue = ""
+  confirmDialog.showModal()
+  // The safe answer has the focus, so a stray Enter does not delete anything.
+  confirmDialog.querySelector("button[value=cancel]").focus()
+}
+
+window.addEventListener("click", e => {
+  if (replayingConfirmedClick) return
+  const element = e.target.closest && e.target.closest("[data-confirm]")
+  if (!element) return
+
+  e.preventDefault()
+  e.stopImmediatePropagation()
+  askToConfirm(element)
+}, true)
+
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))

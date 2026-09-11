@@ -47,7 +47,7 @@ defmodule PulseOpsWeb.MonitoringComponents do
     ~H"""
     <span
       class="inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide"
-      style={"color: #{@meta.color}; background: #{@meta.color}1a"}
+      style={"color: #{@meta.color}; background: color-mix(in oklab, #{@meta.color} 10%, transparent)"}
     >
       <.icon name={@meta.icon} class="size-3.5" />
       {@meta.label}
@@ -321,6 +321,48 @@ defmodule PulseOpsWeb.MonitoringComponents do
     """
   end
 
+  @doc ~S"""
+  A grouped control for choosing a rolling time window.
+
+  Each window is a link that patches the query string, so it is bookmarkable and
+  works without LiveView state. `href_fn` turns a window name into the route.
+
+  ## Examples
+
+      <.window_selector
+        windows={@windows}
+        selected={@window}
+        href_fn={&~p"/orgs/#{@slug}/services/#{@service}?window=#{&1}"}
+      />
+  """
+  attr :windows, :list, required: true
+  attr :selected, :string, required: true
+  attr :href_fn, :any, required: true
+  attr :id, :string, default: "window-selector"
+
+  def window_selector(assigns) do
+    ~H"""
+    <nav
+      id={@id}
+      aria-label="Time window"
+      class="inline-flex rounded-box border border-base-300 bg-base-200/50 p-1"
+    >
+      <.link
+        :for={window <- @windows}
+        patch={@href_fn.(window)}
+        aria-current={window == @selected && "true"}
+        class={[
+          "rounded-sm px-3 py-1.5 text-sm font-medium transition-all",
+          window == @selected && "bg-base-100 shadow-sm text-base-content",
+          window != @selected && "text-base-content/60 hover:text-base-content/80"
+        ]}
+      >
+        {window}
+      </.link>
+    </nav>
+    """
+  end
+
   ## Formatting helpers
 
   @doc """
@@ -371,29 +413,40 @@ defmodule PulseOpsWeb.MonitoringComponents do
   """
   # Reserved status palette. Warning and serious sit below 3:1 on a light
   # surface by design, which is why every use pairs the colour with a label.
+  #
+  # The colours are the CSS variables in assets/css/app.css, not copies of their
+  # values: the palette is written down once, and a flash message and a status
+  # badge cannot drift apart.
   def status_meta(:healthy),
-    do: %{color: "#0ca30c", label: "Healthy", icon: "lucide-circle-check"}
+    do: %{color: "var(--color-success)", label: "Healthy", icon: "lucide-circle-check"}
 
   def status_meta(:degraded),
-    do: %{color: "#fab219", label: "Degraded", icon: "lucide-triangle-alert"}
+    do: %{color: "var(--color-warning)", label: "Degraded", icon: "lucide-triangle-alert"}
 
-  def status_meta(:down), do: %{color: "#d03b3b", label: "Down", icon: "lucide-circle-x"}
+  def status_meta(:down),
+    do: %{color: "var(--color-error)", label: "Down", icon: "lucide-circle-x"}
 
   def status_meta(_unknown),
-    do: %{color: "#898781", label: "Unknown", icon: "lucide-circle-question-mark"}
+    do: %{
+      color: "var(--color-status-unknown)",
+      label: "Unknown",
+      icon: "lucide-circle-question-mark"
+    }
 
   @doc """
   Colour and label for an incident severity.
   """
-  def severity_meta(:critical), do: %{color: "#d03b3b", label: "Critical", icon: "lucide-siren"}
+  def severity_meta(:critical),
+    do: %{color: "var(--color-error)", label: "Critical", icon: "lucide-siren"}
 
   def severity_meta(:high),
-    do: %{color: "#ec835a", label: "High", icon: "lucide-triangle-alert"}
+    do: %{color: "var(--color-severity-high)", label: "High", icon: "lucide-triangle-alert"}
 
   def severity_meta(:medium),
-    do: %{color: "#fab219", label: "Medium", icon: "lucide-circle-alert"}
+    do: %{color: "var(--color-warning)", label: "Medium", icon: "lucide-circle-alert"}
 
-  def severity_meta(_low), do: %{color: "#898781", label: "Low", icon: "lucide-info"}
+  def severity_meta(_low),
+    do: %{color: "var(--color-status-unknown)", label: "Low", icon: "lucide-info"}
 
   @doc """
   Label for an incident workflow status.

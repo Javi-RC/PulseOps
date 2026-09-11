@@ -72,7 +72,7 @@ defmodule PulseOpsWeb.OrganizationLive.Form do
 
           <div class="flex gap-2 pt-2">
             <.button variant="primary" phx-disable-with="Creating...">Create organization</.button>
-            <.link navigate={~p"/"} class="btn btn-soft">Cancel</.link>
+            <.button navigate={~p"/"}>Cancel</.button>
           </div>
         </.form>
       </.card>

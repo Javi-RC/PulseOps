@@ -13,6 +13,7 @@ defmodule PulseOpsWeb.UserAuth do
 
   alias PulseOps.Accounts
   alias PulseOps.Accounts.Scope
+  alias PulseOps.Incidents
   alias PulseOps.Organizations
 
   # Make the remember me cookie valid for 14 days. This should match
@@ -260,6 +261,7 @@ defmodule PulseOpsWeb.UserAuth do
               Organizations.list_organizations_for_user(scope.user)
             )
             |> track_current_path()
+            |> track_open_incidents()
 
           {:cont, socket}
 
@@ -302,6 +304,34 @@ defmodule PulseOpsWeb.UserAuth do
     else
       Phoenix.Component.assign_new(socket, :current_path, fn -> nil end)
     end
+  end
+
+  # The sidebar says how many incidents are open on every page, not only on the
+  # pages about incidents, so trouble is visible from wherever somebody is. Read
+  # on mount and re-read whenever one opens or resolves. The message is halted
+  # here, so no page needs a handle_info clause for something it never asked for.
+  #
+  # Like the current path, only a LiveView mounted through the router gets it: one
+  # rendered inside another view draws no sidebar, and must not be subscribed to a
+  # message it has no hook to swallow.
+  defp track_open_incidents(%{router: nil} = socket),
+    do: Phoenix.Component.assign_new(socket, :open_incident_count, fn -> 0 end)
+
+  defp track_open_incidents(socket) do
+    scope = socket.assigns.current_scope
+
+    if Phoenix.LiveView.connected?(socket), do: Incidents.subscribe_active_incident_count(scope)
+
+    socket
+    |> Phoenix.Component.assign(:open_incident_count, Incidents.count_active_incidents(scope))
+    |> Phoenix.LiveView.attach_hook(:open_incident_count, :handle_info, fn
+      :active_incident_count_changed, socket ->
+        count = Incidents.count_active_incidents(socket.assigns.current_scope)
+        {:halt, Phoenix.Component.assign(socket, :open_incident_count, count)}
+
+      _message, socket ->
+        {:cont, socket}
+    end)
   end
 
   defp redirect_with_error(socket, message, to) do

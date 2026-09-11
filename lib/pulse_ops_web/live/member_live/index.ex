@@ -19,6 +19,7 @@ defmodule PulseOpsWeb.MemberLive.Index do
     {:ok,
      socket
      |> assign(:page_title, "Members")
+     |> assign(:recipient, nil)
      |> assign(:form, to_form(%{"email" => "", "role" => "member"}, as: :member))
      |> load_members()}
   end
@@ -41,6 +42,20 @@ defmodule PulseOpsWeb.MemberLive.Index do
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, message_for(reason))}
+    end
+  end
+
+  # Says, before anything is sent, what the one field will do with this address.
+  # It does tell somebody who manages members whether an address has an account
+  # here — which they learn anyway the moment they submit, from the flash.
+  def handle_event("preview", %{"member" => params}, socket) do
+    if socket.assigns.can_manage? do
+      {:noreply,
+       socket
+       |> assign(:form, to_form(params, as: :member))
+       |> assign(:recipient, recipient(socket, params["email"]))}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -106,7 +121,9 @@ defmodule PulseOpsWeb.MemberLive.Index do
   end
 
   defp reset_form(socket) do
-    assign(socket, :form, to_form(%{"email" => "", "role" => "member"}, as: :member))
+    socket
+    |> assign(:form, to_form(%{"email" => "", "role" => "member"}, as: :member))
+    |> assign(:recipient, nil)
   end
 
   defp load_members(socket) do
@@ -149,6 +166,7 @@ defmodule PulseOpsWeb.MemberLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="Members">
         <:subtitle>
@@ -157,39 +175,56 @@ defmodule PulseOpsWeb.MemberLive.Index do
       </.page_header>
 
       <.card :if={@can_manage?} class="mb-6">
-        <.form for={@form} phx-submit="add" class="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <.form
+          for={@form}
+          id="add-member-form"
+          phx-change="preview"
+          phx-submit="add"
+          class="flex flex-col gap-3 sm:flex-row sm:items-end"
+        >
           <div class="flex-1">
-            <label class="mb-1 block text-sm font-medium" for="member_email">
-              Add or invite somebody
-            </label>
-            <input
-              type="email"
-              id="member_email"
+            <.input
               name="member[email]"
               value={@form[:email].value}
-              required
+              type="email"
+              label="Add or invite somebody"
               placeholder="colleague@example.com"
-              class="input input-bordered w-full"
+              phx-debounce="300"
+              aria-describedby="recipient-hint"
+              required
             />
           </div>
 
           <div class="sm:w-44">
-            <label class="mb-1 block text-sm font-medium" for="member_role">Role</label>
-            <select id="member_role" name="member[role]" class="select select-bordered w-full">
-              <option :for={role <- assignable_roles(@current_scope)} value={role}>
-                {String.capitalize(to_string(role))}
-              </option>
-            </select>
+            <.input
+              name="member[role]"
+              value={@form[:role].value}
+              type="select"
+              label="Role"
+              options={
+                Enum.map(assignable_roles(@current_scope), &{String.capitalize(to_string(&1)), &1})
+              }
+            />
           </div>
 
-          <button class="btn btn-primary">
-            <.icon name="lucide-user-plus" class="size-4" /> Add or invite
-          </button>
+          <.button id="add-member-button" variant="primary" disabled={@recipient == :member}>
+            <.icon
+              name={if(@recipient in [:new, :invited], do: "lucide-mail", else: "lucide-user-plus")}
+              class="size-4"
+            />
+            {submit_label(@recipient)}
+          </.button>
         </.form>
 
-        <p class="mt-2 text-xs text-base-content/50">
-          If they already have a PulseOps account they are added straight away. If not, they are
-          emailed an invitation that lasts {Invitation.validity_days()} days.
+        <p
+          id="recipient-hint"
+          aria-live="polite"
+          class={[
+            "mt-2 text-xs",
+            if(@recipient == :member, do: "text-error", else: "text-base-content/60")
+          ]}
+        >
+          {recipient_hint(@recipient, @current_scope)}
         </p>
       </.card>
 
@@ -211,14 +246,15 @@ defmodule PulseOpsWeb.MemberLive.Index do
               </p>
             </div>
 
-            <button
+            <.button
               :if={@can_manage?}
               phx-click="withdraw"
               phx-value-id={invitation.id}
-              class="btn btn-ghost btn-sm"
+              variant="ghost"
+              size="sm"
             >
               Withdraw
-            </button>
+            </.button>
           </li>
         </ul>
       </.card>
@@ -243,42 +279,58 @@ defmodule PulseOpsWeb.MemberLive.Index do
             </div>
 
             <%= if @can_manage? do %>
-              <form id={"role-form-#{member.id}"} phx-change="set_role" class="contents">
-                <input type="hidden" name="member_id" value={member.id} />
-                <select
-                  name="role"
-                  class="select select-bordered select-sm w-32"
-                  disabled={not editable?(@current_scope, member)}
-                >
-                  <option
-                    :for={role <- assignable_roles(@current_scope)}
-                    value={role}
-                    selected={role == member.role}
-                  >
-                    {String.capitalize(to_string(role))}
-                  </option>
-                  <%!-- An admin cannot assign the owner role, but must still see
-                        it when looking at an owner. --%>
-                  <option
-                    :if={member.role == :owner and @current_scope.role != :owner}
-                    value="owner"
-                    selected
-                  >
-                    Owner
-                  </option>
-                </select>
-              </form>
-
-              <button
-                phx-click="remove"
-                phx-value-id={member.id}
-                data-confirm={"Remove #{member.user.email} from #{@current_scope.organization.name}?"}
-                disabled={not editable?(@current_scope, member)}
-                class="btn btn-ghost btn-sm text-error disabled:text-base-content/30"
-                aria-label={"Remove #{member.user.email}"}
+              <.tooltip
+                id={"member-#{member.id}-locked"}
+                text={locked_reason(@current_scope, member) || ""}
+                active={not editable?(@current_scope, member)}
+                class="inline-flex items-center gap-3"
               >
-                <.icon name="lucide-trash" class="size-4" />
-              </button>
+                <form id={"role-form-#{member.id}"} phx-change="set_role" class="contents">
+                  <input type="hidden" name="member_id" value={member.id} />
+                  <select
+                    name="role"
+                    class="select select-bordered select-sm w-32"
+                    disabled={not editable?(@current_scope, member)}
+                    aria-describedby={
+                      not editable?(@current_scope, member) && "member-#{member.id}-locked"
+                    }
+                  >
+                    <option
+                      :for={role <- assignable_roles(@current_scope)}
+                      value={role}
+                      selected={role == member.role}
+                    >
+                      {String.capitalize(to_string(role))}
+                    </option>
+                    <%!-- An admin cannot assign the owner role, but must still see
+                        it when looking at an owner. --%>
+                    <option
+                      :if={member.role == :owner and @current_scope.role != :owner}
+                      value="owner"
+                      selected
+                    >
+                      Owner
+                    </option>
+                  </select>
+                </form>
+
+                <.button
+                  phx-click="remove"
+                  phx-value-id={member.id}
+                  data-confirm={"Remove #{member.user.email} from #{@current_scope.organization.name}?"}
+                  data-confirm-label="Remove member"
+                  disabled={not editable?(@current_scope, member)}
+                  variant="danger-ghost"
+                  size="sm"
+                  class="disabled:text-base-content/30"
+                  aria-label={"Remove #{member.user.email}"}
+                  aria-describedby={
+                    not editable?(@current_scope, member) && "member-#{member.id}-locked"
+                  }
+                >
+                  <.icon name="lucide-trash" class="size-4" />
+                </.button>
+              </.tooltip>
             <% else %>
               <.role_badge role={member.role} />
             <% end %>
@@ -286,12 +338,22 @@ defmodule PulseOpsWeb.MemberLive.Index do
         </ul>
       </.card>
 
-      <section class="mt-8">
-        <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-base-content/60">
+      <%!-- Reference, not something to act on, so it is folded until wanted. Ignored
+            by LiveView patches, which would otherwise close it on every change. --%>
+      <details
+        id="role-permissions"
+        phx-update="ignore"
+        class="group mt-8 rounded-box border border-base-300 bg-base-100"
+      >
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
           What each role can do
-        </h2>
+          <.icon
+            name="lucide-chevron-down"
+            class="size-4 shrink-0 text-base-content/50 transition-transform group-open:rotate-180"
+          />
+        </summary>
 
-        <div class="overflow-x-auto rounded-box border border-base-300 bg-base-100">
+        <div class="overflow-x-auto border-t border-base-300">
           <table class="table table-sm">
             <thead>
               <tr>
@@ -313,7 +375,7 @@ defmodule PulseOpsWeb.MemberLive.Index do
             </tbody>
           </table>
         </div>
-      </section>
+      </details>
     </Layouts.app>
     """
   end
@@ -328,8 +390,53 @@ defmodule PulseOpsWeb.MemberLive.Index do
   defp assignable_roles(_scope), do: Membership.roles() -- [:owner]
 
   # You cannot edit yourself out of the organization by accident, and an admin
-  # cannot touch an owner.
-  defp editable?(scope, member) do
-    member.user_id != scope.user.id and (scope.role == :owner or member.role != :owner)
+  # cannot touch an owner. Each rule carries the sentence that explains it, so a
+  # locked control always says why.
+  defp locked_reason(scope, member) do
+    cond do
+      member.user_id == scope.user.id ->
+        "You cannot change your own role or remove yourself; somebody else who manages members can."
+
+      member.role == :owner and scope.role != :owner ->
+        "Only an owner can change or remove another owner."
+
+      true ->
+        nil
+    end
   end
+
+  defp editable?(scope, member), do: is_nil(locked_reason(scope, member))
+
+  defp recipient(socket, email) do
+    address = Invitation.normalize_email(email || "")
+
+    cond do
+      not String.contains?(address, "@") -> nil
+      Enum.any?(socket.assigns.members, &(&1.user.email == address)) -> :member
+      Enum.any?(socket.assigns.invitations, &(&1.email == address)) -> :invited
+      PulseOps.Accounts.get_user_by_email(address) -> :account
+      true -> :new
+    end
+  end
+
+  defp submit_label(:account), do: "Add member"
+  defp submit_label(recipient) when recipient in [:new, :invited], do: "Send invitation"
+  defp submit_label(_recipient), do: "Add or invite"
+
+  defp recipient_hint(:member, scope),
+    do: "Already a member of #{scope.organization.name}."
+
+  defp recipient_hint(:invited, _scope),
+    do: "Already invited. Sending again replaces the link they were sent."
+
+  defp recipient_hint(:account, _scope),
+    do: "They have a PulseOps account, so they are added straight away."
+
+  defp recipient_hint(:new, _scope),
+    do:
+      "No PulseOps account yet, so they are emailed an invitation that lasts #{Invitation.validity_days()} days."
+
+  defp recipient_hint(nil, _scope),
+    do:
+      "Somebody with a PulseOps account is added straight away; anybody else is emailed an invitation that lasts #{Invitation.validity_days()} days."
 end

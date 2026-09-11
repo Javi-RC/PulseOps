@@ -135,6 +135,22 @@ defmodule PulseOpsWeb.NotifierLive.Form do
 
   defp notifiers_path(scope), do: ~p"/orgs/#{scope.organization.slug}/settings/notifiers"
 
+  # "Escalation" means nothing until you know what sets one off, so the hint says
+  # it with the delay this installation actually uses.
+  defp escalation_hint do
+    case PulseOps.Notifications.escalation_after_seconds() do
+      nil ->
+        "Escalation is switched off in this installation, so a notifier set like this is never told anything."
+
+      seconds ->
+        "Stays quiet for ordinary incidents. Told only when a critical incident goes " <>
+          "#{minutes(seconds)} without anybody acknowledging it — the point of a second line."
+    end
+  end
+
+  defp minutes(seconds) when seconds < 120, do: "#{seconds} seconds"
+  defp minutes(seconds), do: "#{div(seconds, 60)} minutes"
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -143,6 +159,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title={@page_title}>
         <:subtitle>
@@ -156,9 +173,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
         <div class="grid gap-4 lg:grid-cols-3">
           <div class="space-y-4 lg:col-span-2">
             <.card>
-              <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                Channel
-              </h2>
+              <.section_heading title="Channel" />
 
               <.input field={@form[:name]} type="text" label="Name" required />
               <.input
@@ -211,9 +226,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
             </.card>
 
             <.card>
-              <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                People
-              </h2>
+              <.section_heading title="People" />
               <.input
                 field={@form[:assignee_ids]}
                 type="select"
@@ -243,9 +256,8 @@ defmodule PulseOpsWeb.NotifierLive.Form do
                   type="checkbox"
                   label="Only for escalations"
                 />
-                <p class="mt-1 text-xs text-base-content/50">
-                  Stays quiet for ordinary incidents. Told only when a critical one has gone
-                  unacknowledged — which is the point of having a second line.
+                <p id="escalation-hint" class="mt-1 text-xs text-base-content/50">
+                  {escalation_hint()}
                 </p>
               </div>
             </.card>
@@ -253,9 +265,7 @@ defmodule PulseOpsWeb.NotifierLive.Form do
 
           <div class="space-y-4">
             <.card>
-              <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-base-content/60">
-                What arrives
-              </h2>
+              <.section_heading title="What arrives" />
               <ul class="space-y-2 text-sm text-base-content/70">
                 <li class="flex items-start gap-2">
                   <.icon name="lucide-triangle-alert" class="mt-0.5 size-4 shrink-0 text-error" />
@@ -272,9 +282,9 @@ defmodule PulseOpsWeb.NotifierLive.Form do
               <.button id="save-notifier-button" variant="primary" phx-disable-with="Saving...">
                 Save notifier
               </.button>
-              <.link navigate={notifiers_path(@current_scope)} class="btn btn-soft">
+              <.button navigate={notifiers_path(@current_scope)}>
                 Cancel
-              </.link>
+              </.button>
             </div>
           </div>
         </div>

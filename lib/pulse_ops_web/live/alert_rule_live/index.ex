@@ -69,6 +69,7 @@ defmodule PulseOpsWeb.AlertRuleLive.Index do
       current_scope={@current_scope}
       organizations={@organizations}
       current_path={@current_path}
+      open_incident_count={@open_incident_count}
     >
       <.page_header title="Alert rules">
         <:subtitle>
@@ -76,14 +77,15 @@ defmodule PulseOpsWeb.AlertRuleLive.Index do
           incident that follows is classified.
         </:subtitle>
         <:actions>
-          <.link
+          <.button
             :if={@can_manage?}
             id="new-rule-link"
             navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules/new"}
-            class="btn btn-primary btn-sm"
+            variant="primary"
+            size="sm"
           >
             <.icon name="lucide-plus" class="size-4" /> New rule
-          </.link>
+          </.button>
         </:actions>
       </.page_header>
 
@@ -127,13 +129,13 @@ defmodule PulseOpsWeb.AlertRuleLive.Index do
             <div class="flex items-center gap-2">
               <%= if is_nil(@default_rule.id) do %>
                 <%= if @can_manage? do %>
-                  <.link
+                  <.button
                     id="configure-defaults-link"
                     navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules/new"}
-                    class="btn btn-soft btn-sm"
+                    size="sm"
                   >
                     Configure defaults
-                  </.link>
+                  </.button>
                 <% else %>
                   <span class="flex items-center gap-1 text-xs text-base-content/50">
                     <.icon name="lucide-info" class="size-4" /> Using the built-in defaults
@@ -141,15 +143,15 @@ defmodule PulseOpsWeb.AlertRuleLive.Index do
                 <% end %>
               <% else %>
                 <%= if @can_manage? do %>
-                  <.link
+                  <.button
                     id="edit-default-rule-link"
                     navigate={
                       ~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules/#{@default_rule.id}/edit"
                     }
-                    class="btn btn-soft btn-sm"
+                    size="sm"
                   >
                     Edit
-                  </.link>
+                  </.button>
                 <% end %>
               <% end %>
             </div>
@@ -158,26 +160,21 @@ defmodule PulseOpsWeb.AlertRuleLive.Index do
       </.card>
 
       <section>
-        <div class="mb-3 flex items-end justify-between gap-4">
-          <div>
-            <h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/60">
-              Per-service rules
-            </h2>
-            <p class="text-xs text-base-content/50">Overrides that apply to one service only.</p>
-          </div>
-        </div>
+        <.section_heading title="Per-service rules">
+          <:subtitle>Overrides that apply to one service only.</:subtitle>
+        </.section_heading>
 
         <%= if @service_rules == [] do %>
           <.empty_state icon="lucide-sliders-horizontal" title="No per-service rules yet">
             <:subtitle>Every service follows the organization default.</:subtitle>
             <:actions>
-              <.link
+              <.button
                 :if={@can_manage?}
                 navigate={~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules/new"}
-                class="btn btn-soft btn-sm"
+                size="sm"
               >
                 Add a rule
-              </.link>
+              </.button>
             </:actions>
           </.empty_state>
         <% else %>
@@ -202,24 +199,27 @@ defmodule PulseOpsWeb.AlertRuleLive.Index do
               </div>
               <%= if @can_manage? do %>
                 <div class="flex items-center gap-1">
-                  <.link
+                  <.button
                     navigate={
                       ~p"/orgs/#{@current_scope.organization.slug}/settings/alert-rules/#{rule.id}/edit"
                     }
-                    class="btn btn-ghost btn-sm"
+                    variant="ghost"
+                    size="sm"
                   >
                     Edit
-                  </.link>
-                  <button
+                  </.button>
+                  <.button
                     type="button"
                     phx-click="delete"
                     phx-value-id={rule.id}
                     data-confirm={"Remove the rule for #{rule.service.name}? It will fall back on the organization default."}
-                    class="btn btn-ghost btn-sm text-error"
+                    data-confirm-label="Remove rule"
+                    variant="danger-ghost"
+                    size="sm"
                     aria-label={"Delete rule for #{rule.service.name}"}
                   >
                     <.icon name="lucide-trash" class="size-4" />
-                  </button>
+                  </.button>
                 </div>
               <% end %>
             </div>
