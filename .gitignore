@@ -40,3 +40,6 @@ npm-debug.log
 
 # Dialyzer PLT cache.
 /priv/plts/
+
+# Working notes (progress, roadmap, architecture, decisions) stay local.
+/docs/

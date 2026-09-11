@@ -32,15 +32,6 @@ rather than one per change.
   (owner, admin, member, viewer) and change them later. Authorization is enforced
   in the domain layer, not by hiding buttons.
 
-## Resuming development
-
-Start here, in this order:
-
-1. [`docs/PROGRESS.md`](docs/PROGRESS.md) — current state, what is done, what is next.
-2. [`docs/ROADMAP.md`](docs/ROADMAP.md) — audited defects, priorities and the phased plan.
-3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — supervision tree, data model, PubSub topics.
-4. [`docs/DECISIONS.md`](docs/DECISIONS.md) — why the design looks the way it does.
-
 ## Deploying it
 
 `Dockerfile` builds a production image: a `mix release` on a runtime that has no
@@ -238,7 +229,7 @@ Task.Supervisor.async_nolink  ──►  HealthCheck.Req  ──►  {:ok, Resul
         broadcast to PubSub  ──►  LiveView  ──►  DOM
 ```
 
-The decisions worth knowing about, all argued in [`docs/DECISIONS.md`](docs/DECISIONS.md):
+The decisions worth knowing about:
 
 - **The probe never runs inside the GenServer callback.** A monitor has one
   mailbox; a synchronous request with a 5 s timeout would block it for 5 s — it
